@@ -4,3 +4,6 @@ yfinance
 pandas
 python-multipart
 fastapi-cors
+debugpy
+polygon-api-client
+python-dotenv

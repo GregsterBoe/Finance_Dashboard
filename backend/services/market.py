@@ -1,105 +1,108 @@
 from fastapi import APIRouter, HTTPException
-import yfinance as yf
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
-import pandas as pd
-from datetime import datetime
+from polygon import RESTClient
+from datetime import datetime, timedelta
+import os
+from dotenv import load_dotenv
 
 router = APIRouter()
+load_dotenv()
+
+POLY_KEY = os.getenv("POLYGON_API_KEY")
+if not POLY_KEY:
+    raise ValueError("POLYGON_API_KEY not set in environment variables")
+
+client = RESTClient(api_key=POLY_KEY)
 
 MAJOR_MARKETS = {
-    "S&P 500": "^GSPC",
-    "NASDAQ": "^IXIC", 
-    "DOW JONES": "^DJI",
-    "RUSSELL 2000": "^RUT",
-    "DAX": "^GDAXI",
-    "NIKKEI": "^N225",
-    "FTSE 100": "^FTSE",
-    "SHANGHAI COMP": "000001.SS",
-    "HANG SENG": "^HSI"
+    "S&P 500": "SPY",   # ETF proxy
+    "NASDAQ": "QQQ",    # ETF proxy
 }
 
-# Thread pool for running synchronous yfinance calls
-executor = ThreadPoolExecutor(max_workers=10)
-
-async def get_market_data(ticker: str, name: str):
-    """Fetch market data asynchronously"""
-    try:
-        # Run synchronous yfinance call in thread pool
-        loop = asyncio.get_event_loop()
-        df = await loop.run_in_executor(
-            executor, 
-            lambda: yf.download(ticker, period="5d", interval="1d", progress=False)
-        )
-        
-        if df.empty or len(df) < 2:
-            print(f"No data or insufficient data for {name} ({ticker})")
-            return None
-            
-        # Get the latest data - use .iloc to avoid Series issues
-        latest = df.iloc[-1]
-        prev_close = df.iloc[-2]["Close"] if len(df) > 1 else latest["Close"]
-        
-        # Extract values properly using .iloc[0] or direct access
-        current_close = float(latest["Close"])
-        previous_close = float(prev_close)
-        
-        price_change = current_close - previous_close
-        percent_change = (price_change / previous_close) * 100 if previous_close != 0 else 0
-        
-        # Fix the volume extraction
-        volume = int(latest["Volume"].iloc[0]) if hasattr(latest["Volume"], 'iloc') else int(latest["Volume"])
-        
-        return {
-            "name": name,
-            "ticker": ticker,
-            "price": round(current_close, 2),
-            "change": round(price_change, 2),
-            "percent_change": round(percent_change, 2),
-            "volume": volume,
-            "last_updated": latest.name.strftime("%Y-%m-%d %H:%M:%S") if hasattr(latest.name, 'strftime') else str(latest.name),
-            "previous_close": round(previous_close, 2),
-            "currency": "USD"  # Default currency
-        }
-        
-    except Exception as e:
-        print(f"Error fetching {name} ({ticker}): {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return None
+def calculate_market_summary(market_data):
+    """Calculate market summary statistics based on actual market changes"""
+    up_markets = sum(1 for m in market_data if m["change"] > 0)
+    down_markets = sum(1 for m in market_data if m["change"] < 0)
+    neutral_markets = sum(1 for m in market_data if m["change"] == 0)
+    
+    return {
+        "total_markets": len(market_data),
+        "up_markets": up_markets,
+        "down_markets": down_markets,
+        "neutral_markets": neutral_markets,
+    }
 
 @router.get("/market-overview")
-async def market_overview():
-    """Get overview of major market indices"""
+def market_overview():
     try:
-        # Fetch all market data concurrently
-        tasks = [
-            get_market_data(ticker, name) 
-            for name, ticker in MAJOR_MARKETS.items()
-        ]
-        
-        results = await asyncio.gather(*tasks)
-        
-        # Filter out None results and create response
-        market_data = [result for result in results if result is not None]
-        
-        # Calculate overall market status
-        up_markets = sum(1 for market in market_data if market and market.get("change", 0) > 0)
-        down_markets = sum(1 for market in market_data if market and market.get("change", 0) < 0)
-        
+        market_data = []
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=60)  # fetch last 60 days (50 trading days)
+
+        for name, ticker in MAJOR_MARKETS.items():
+            try:
+                # Historical OHLCV data
+                aggs = client.get_aggs(
+                    ticker=ticker,
+                    multiplier=1,
+                    timespan="day",
+                    from_=start_date.strftime("%Y-%m-%d"),
+                    to=end_date.strftime("%Y-%m-%d"),
+                    limit=50
+                )
+
+                if not aggs or len(aggs) < 2:  # Need at least 2 data points for change calculation
+                    continue
+
+                # Get latest and previous candles for change calculation
+                latest = aggs[-1]
+                previous = aggs[-2]
+                
+                current_price = latest.close
+                previous_close = previous.close
+                volume = latest.volume
+                
+                # Calculate actual changes
+                change = round(current_price - previous_close, 2)
+                percent_change = round((change / previous_close) * 100, 2) if previous_close != 0 else 0.0
+
+                # Prepare history array for charting (last 30 days for cleaner charts)
+                history = [
+                    {
+                        "date": datetime.fromtimestamp(a.timestamp / 1000).strftime("%Y-%m-%d"),
+                        "open": a.open,
+                        "high": a.high,
+                        "low": a.low,
+                        "close": a.close,
+                        "volume": a.volume,
+                    }
+                    for a in aggs[-30:]  # Last 30 data points for cleaner visualization
+                ]
+
+                market_data.append({
+                    "name": name,
+                    "ticker": ticker,
+                    "price": round(current_price, 2),
+                    "change": change,
+                    "percent_change": percent_change,
+                    "volume": volume,
+                    "previous_close": round(previous_close, 2),
+                    "currency": "$",  # Changed to just "$" to match frontend
+                    "last_updated": datetime.now().isoformat(),
+                    "history": history
+                })
+
+            except Exception as e:
+                print(f"Error fetching {name} ({ticker}): {e}")
+                continue
+
+        # Calculate summary based on actual market changes
+        summary = calculate_market_summary(market_data)
+
         return {
             "timestamp": datetime.now().isoformat(),
             "markets": market_data,
-            "summary": {
-                "total_markets": len(market_data),
-                "up_markets": up_markets,
-                "down_markets": down_markets,
-                "neutral_markets": len(market_data) - up_markets - down_markets
-            }
+            "summary": summary,
         }
-        
+
     except Exception as e:
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Error fetching market data: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Error in polygon MVP endpoint: {e}")

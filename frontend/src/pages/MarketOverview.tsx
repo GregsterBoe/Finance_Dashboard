@@ -1,6 +1,23 @@
 // src/pages/MarketOverview.tsx
 import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
+
+interface MarketHistory {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
 
 interface Market {
   name: string;
@@ -12,6 +29,7 @@ interface Market {
   last_updated: string;
   previous_close: number;
   currency: string;
+  history: MarketHistory[];
 }
 
 interface MarketOverviewResponse {
@@ -29,31 +47,16 @@ export default function MarketOverview() {
   const { data, isLoading, error } = useQuery<MarketOverviewResponse>({
     queryKey: ["market-overview"],
     queryFn: async () => {
-      console.log("Making API request to backend...");
-      try {
-        const res = await axios.get("http://127.0.0.1:8000/api/market-overview");
-        console.log("API response:", res.data);
-        return res.data;
-      } catch (err) {
-        console.error("API request failed:", err);
-        throw err;
-      }
+      const res = await axios.get("http://127.0.0.1:8000/api/market-overview");
+      return res.data;
     },
     retry: 1,
     retryDelay: 1000,
   });
 
-  console.log("Query state:", { isLoading, error, data });
-
   if (isLoading) return <div className="p-6">Loading market data...</div>;
-  if (error) {
-    console.error("Query error:", error);
-    return <div className="p-6 text-red-500">Error loading market data: {error instanceof Error ? error.message : 'Unknown error'}</div>;
-  }
-
-  if (!data || !data.markets) {
-    return <div className="p-6">No market data available</div>;
-  }
+  if (error) return <div className="p-6 text-red-500">Error loading market data</div>;
+  if (!data) return <div className="p-6">No market data available</div>;
 
   return (
     <div className="p-6">
@@ -82,7 +85,6 @@ export default function MarketOverview() {
         </div>
       </div>
 
-      {/* Markets Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {data.markets.map((market) => (
           <div key={market.ticker} className="p-4 border rounded-lg shadow-sm bg-white">
@@ -92,17 +94,47 @@ export default function MarketOverview() {
                 <p className="text-sm text-gray-500">{market.ticker}</p>
               </div>
               <div className="text-right">
-                <div className="text-xl font-bold">${market.price.toLocaleString()}</div>
-                <div className={`text-sm ${
-                  market.change >= 0 ? 'text-green-600' : 'text-red-600'
-                }`}>
-                  {market.change >= 0 ? '+' : ''}{market.change.toFixed(2)} ({market.percent_change.toFixed(2)}%)
+                <div className="text-xl font-bold">
+                  {market.currency}{market.price.toLocaleString()}
+                </div>
+                <div className={`text-sm ${market.change >= 0 ? "text-green-600" : "text-red-600"}`}>
+                  {market.change >= 0 ? "+" : ""}
+                  {market.change.toFixed(2)} ({market.percent_change.toFixed(2)}%)
                 </div>
               </div>
             </div>
+
+            {/* Fixed chart container with explicit height */}
+            <div className="w-full h-[200px] mb-2">
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart 
+                  data={market.history}
+                  margin={{ top: 5, right: 5, left: 5, bottom: 5 }}
+                >
+                  <XAxis dataKey="date" hide />
+                  <YAxis hide domain={["dataMin - 1", "dataMax + 1"]} />
+                  <Tooltip 
+                    formatter={(value, name) => {
+                      const numValue = typeof value === "number" ? value : Number(value);
+                      return [`$${numValue.toFixed(2)}`, 'Close'];
+                    }}
+                    labelFormatter={(label) => `Date: ${label}`}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="close"
+                    stroke={market.change >= 0 ? "#16a34a" : market.change < 0 ? "#dc2626" : "#6b7280"}
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
             <div className="text-xs text-gray-500 space-y-1">
               <div>Volume: {market.volume.toLocaleString()}</div>
-              <div>Previous Close: ${market.previous_close.toFixed(2)}</div>
+              <div>Previous Close: {market.currency}{market.previous_close.toFixed(2)}</div>
               <div>Last Updated: {new Date(market.last_updated).toLocaleTimeString()}</div>
             </div>
           </div>
