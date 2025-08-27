@@ -1,4 +1,3 @@
-// src/pages/MarketOverview.tsx
 import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
 import { useState } from "react";
@@ -68,15 +67,6 @@ const getRegionEmoji = (region: string): string => {
     "Other": "🌍"
   };
   return emojiMap[region] || "🌍";
-};
-
-// Helper function to get sentiment color
-const getSentimentColor = (sentiment: string): string => {
-  switch (sentiment) {
-    case "bullish": return "text-green-600";
-    case "bearish": return "text-red-600";
-    default: return "text-yellow-600";
-  }
 };
 
 export default function MarketOverview() {
@@ -254,7 +244,7 @@ export default function MarketOverview() {
                               <XAxis dataKey="date" hide />
                               <YAxis hide domain={["dataMin - 1", "dataMax + 1"]} />
                               <Tooltip 
-                                formatter={(value, name) => {
+                                formatter={(value) => {
                                   const numValue = typeof value === "number" ? value : Number(value);
                                   const currencySymbol = market.currency === "USD" ? "$" : market.currency + " ";
                                   return [`${currencySymbol}${numValue.toFixed(2)}`, 'Close'];
