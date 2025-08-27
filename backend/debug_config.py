@@ -9,7 +9,7 @@ def configure_debug_mode():
     Useful when running the app with uvicorn --reload
     """
     # Enable debugpy server
-    debugpy.listen(("localhost", 5678))
+    debugpy.listen(("localhost", 5173))
     print("⏳ Waiting for debugger to attach...")
     debugpy.wait_for_client()  # blocks execution until client is attached
     print("🐛 Debugger attached!")

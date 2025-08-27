@@ -13,7 +13,7 @@ export default function DashboardLayout({ children }: Props) {
         <h2 className="text-xl font-bold mb-6">Finance Dashboard</h2>
         <nav className="flex flex-col gap-4">
           <Link to="/">📊 Market Overview</Link>
-          <Link to="/portfolio">💼 Portfolio</Link>
+          <Link to="/stocks">💼 Stocks</Link>
         </nav>
       </aside>
 

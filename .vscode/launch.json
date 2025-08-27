@@ -51,6 +51,14 @@
           "remoteRoot": "."
         }
       ]
+    },
+    {
+      "name": "Debug fetch_portfolio",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/backend/utils/fetch_portfolio.py",
+      "console": "integratedTerminal",
+      "envFile": "${workspaceFolder}/.env"
     }
   ]
 }
