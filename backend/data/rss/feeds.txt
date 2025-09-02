@@ -1,0 +1,143 @@
+# US-focused Macro Feeds
+https://www.federalreserve.gov/feeds/H15.xml
+https://www.treasurydirect.gov/rss/TreasuryAuctionResults.xml
+https://www.bls.gov/feed/bls_latest.rss
+https://www.stlouisfed.org/rss
+
+# german language
+https://www.handelsblatt.com/contentexport/feed/finanzen
+https://www.manager-magazin.de/news/index.rss
+https://newsfeed.zeit.de/wirtschaft/index
+https://www.welt.de/feeds/section/wirtschaft.rss
+https://www.ad-hoc-news.de/rss/nachrichten.xml
+https://www.wiwo.de/contentexport/feed/rss/schlagzeilen
+
+# Europe-focused Macro Feeds  
+https://www.ecb.europa.eu/rss/press.xml
+https://www.imf.org/en/News/RSS
+https://cepr.org/rss/news
+https://www.ft.com/rss/home
+https://www.ft.com/rss/home/international
+
+# Additional US Government Sources
+https://www.newyorkfed.org/rss/newsandevents_xml
+https://www.philadelphiafed.org/rss/research-and-data
+
+# Think Tanks & Research
+https://www.brookings.edu/feed/
+https://www.aei.org/feed/
+https://www.cato.org/rss/commentary
+
+# European Sources
+https://www.ifo.de/en/rss
+
+# International Organizations
+bankpediaa.com/feed
+
+# Specialized Analysis
+https://www.calculatedriskblog.com/feeds/posts/default
+https://marginalrevolution.com/feed
+https://www.nakedcapitalism.com/feed
+
+# Energy & Labor
+https://www.eia.gov/rss/todayinenergy.xml
+
+# New Feeds
+# CNBC
+https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10001147
+https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839135
+https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258
+https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664
+https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10001054
+https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069
+https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100646281
+https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=21324812
+https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20409666
+https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19206666
+https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15838459
+
+# Marketwatch
+http://feeds.marketwatch.com/marketwatch/topstories
+http://feeds.marketwatch.com/marketwatch/realtimeheadlines
+http://feeds.marketwatch.com/marketwatch/marketpulse
+http://feeds.marketwatch.com/marketwatch/bulletins
+
+# Huffpost
+https://www.huffpost.com/section/business/feed
+https://www.huffpost.com/section/money/feed
+
+# CBS News
+https://www.cbsnews.com/latest/rss/moneywatch
+
+# Politico
+https://rss.politico.com/morningmoney.xml
+https://rss.politico.com/morningshift.xml
+https://rss.politico.com/morningtrade.xml
+https://rss.politico.com/economy.xml
+
+# The Hill
+https://thehill.com/policy/finance/feed
+
+# Time
+https://time.com/nextadvisor/feed
+
+# Seattle Times
+https://www.seattletimes.com/business/feed
+
+# Naked Capitalism
+https://www.nakedcapitalism.com/feed
+
+# NAR
+http://feeds.feedburner.com/nar/economists-outlook
+
+# Storeys
+https://storeys.com/money/feed
+
+# ThinkAdvisor
+https://feeds.feedblitz.com/ThinkAdvisor
+
+# Wealth Management
+http://wealthmanagement.com/rss.xml
+
+# Advisor Perspectives
+https://www.advisorperspectives.com/content.rss
+
+# Daily Reckoning
+https://dailyreckoning.com/feed
+
+# FA
+http://www.fa-mag.com/fa-online/news/rss
+
+# Wealthy Retirement
+https://wealthyretirement.com/feed
+
+# Investor’s Business Daily
+https://www.investors.com/feed
+https://www.investors.com/category/market-trend/the-big-picture/feed
+https://www.investors.com/category/etfs-and-funds/personal-finance/feed
+https://www.investors.com/category/etfs-and-funds/retirement/feed
+https://www.investors.com/category/news/economy/feed
+
+# Fortune
+https://fortune.com/feed
+
+# Marketbeat
+https://www.marketbeat.com/feed
+
+# Kiplinger
+https://www.kiplinger.com/feed/all
+
+# BiggerPockets
+https://www.biggerpockets.com/blog/category/personal-finance/feed
+https://www.biggerpockets.com/blog/category/on-the-market-articles/feed
+
+# ETF.com
+https://www.etf.com/home.feed
+
+# CNN Money
+http://rss.cnn.com/rss/money_news_international.rss
+http://rss.cnn.com/rss/money_news_economy.rss
+http://rss.cnn.com/rss/money_news_companies.rss
+http://rss.cnn.com/rss/money_markets.rss
+http://rss.cnn.com/rss/money_pf.rss
+http://rss.cnn.com/rss/money_retirement.rss

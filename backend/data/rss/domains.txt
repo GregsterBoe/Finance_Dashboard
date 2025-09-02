@@ -1,0 +1,26 @@
+# US Institutions
+federalreserve.gov
+treasurydirect.gov
+bls.gov
+stlouisfed.org
+
+# European Institutions
+ecb.europa.eu
+imf.org
+oecd.org
+bruegel.org
+cepr.org
+
+# Financial & Economic Media
+ft.com
+reuters.com
+bloomberg.com
+economist.com
+handelsblatt.com
+lesechos.fr
+elpais.com
+sueddeutsche.de
+
+# Aggregators / Research
+economic-research.bnpparibas.com
+voxeu.org

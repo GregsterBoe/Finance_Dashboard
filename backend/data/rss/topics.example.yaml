@@ -1,0 +1,52 @@
+topics:
+  - name: Labor Market
+    prompts:
+      - "unemployment rate"
+      - "jobless claims"
+      - "labor market"
+      - "employment statistics"
+      - "wages and salaries"
+      - "union negotiations"
+      - "labor participation rate"
+
+  - name: Housing Market
+    prompts:
+      - "housing prices"
+      - "real estate market"
+      - "mortgage rates"
+      - "home sales"
+      - "construction permits"
+      - "rental market"
+      - "housing demand"
+
+  - name: Bonds & Interest Rates
+    prompts:
+      - "government bonds"
+      - "treasury yields"
+      - "sovereign debt"
+      - "bond spreads"
+      - "interest rate policy"
+      - "monetary tightening"
+      - "ECB policy"
+      - "Federal Reserve bond market"
+
+  - name: Inflation & Prices
+    prompts:
+      - "consumer price index"
+      - "producer price index"
+      - "inflation rate"
+      - "cost of living"
+      - "price stability"
+      - "deflation"
+      - "stagflation"
+
+  - name: Economic Outlook
+    prompts:
+      - "economic growth forecast"
+      - "GDP growth"
+      - "recession risk"
+      - "macroeconomic policy"
+      - "economic slowdown"
+      - "stability program"
+      - "fiscal policy"
+
