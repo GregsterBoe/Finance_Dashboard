@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from services.market import router as market_router
 from services.stock_assesment import router as stock_router
+from services.whale_watching import router as whale_router
 
 app = FastAPI()
 
@@ -17,6 +18,7 @@ app.add_middleware(
 
 app.include_router(market_router, prefix="/api")
 app.include_router(stock_router, prefix="/api")
+app.include_router(whale_router, prefix="/api")
 
 @app.get("/")
 def api_root():

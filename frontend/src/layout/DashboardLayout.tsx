@@ -14,6 +14,8 @@ export default function DashboardLayout({ children }: Props) {
         <nav className="flex flex-col gap-4">
           <Link to="/">📊 Market Overview</Link>
           <Link to="/stocks">💼 Stocks</Link>
+          <Link to="/whale-watchlist">🐋 Whale Watchlist</Link>
+          <Link to="/activity-tracker">📈 Activity Tracker</Link>
         </nav>
       </aside>
 
