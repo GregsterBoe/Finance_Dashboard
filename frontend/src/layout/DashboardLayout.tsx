@@ -17,6 +17,7 @@ export default function DashboardLayout({ children }: Props) {
           <Link to="/whale-watchlist">🐋 Whale Watchlist</Link>
           <Link to="/activity-tracker">📈 Activity Tracker</Link>
           <Link to="/stock-price-predictor">🤖 Stock Price Predictor</Link>
+          <Link to="/backtest">🔄 Model Backtesting</Link>
         </nav>
       </aside>
 

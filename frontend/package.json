@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm run backend\" \"npm run frontend\"",
+    "dev:debug": "concurrently \"npm run backend:debug\" \"npm run frontend\"",
     "backend": "cd ../backend && uvicorn app:app --reload --port 8000",
+    "backend:debug": "cd ../backend && python -m debugpy --listen 5678 -m uvicorn app:app --reload --host 127.0.0.1 --port 8000",
     "frontend": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",

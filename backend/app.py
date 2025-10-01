@@ -4,6 +4,7 @@ from services.market import router as market_router
 from services.stock_assesment import router as stock_router
 from services.whale_watching import router as whale_router
 from services.ml_training import router as ml_router
+from services.ml_backtest import router as backtest_router
 
 app = FastAPI()
 
@@ -21,6 +22,7 @@ app.include_router(market_router, prefix="/api")
 app.include_router(stock_router, prefix="/api")
 app.include_router(whale_router, prefix="/api")
 app.include_router(ml_router, prefix="/api", tags=["ml"])
+app.include_router(backtest_router, prefix="/api", tags=["backtest"])
 
 @app.get("/")
 def api_root():

@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import WhaleWatchlist from "./pages/WhaleWatchlist";
 import ActivityTracker from "./pages/ActivityTracker";
 import StockPricePredictor from "./pages/StockPricePredictor";
+import ModelBacktesting from "./pages/ModelBackTesting";
 
 
 const queryClient = new QueryClient();
@@ -22,6 +23,7 @@ function App() {
             <Route path="/whale-watchlist" element={<WhaleWatchlist />} />
             <Route path="/activity-tracker" element={<ActivityTracker />} />
             <Route path="/stock-price-predictor" element={<StockPricePredictor />} />
+            <Route path="/backtest" element={<ModelBacktesting />} />
           </Routes>
         </DashboardLayout>
       </Router>
