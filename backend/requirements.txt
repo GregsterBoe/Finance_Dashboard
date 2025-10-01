@@ -8,6 +8,7 @@ debugpy
 python-dotenv
 pytr
 Babel
+scikit-learn
 
 
 feedparser==6.0.11
