@@ -1,24 +1,33 @@
+// frontend/src/pages/StockPricePredictor.tsx
 import { useState, useEffect } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+
+interface ModelConfig {
+  model_type: string;
+  max_depth: number;
+  min_samples_split: number;
+  min_samples_leaf: number;
+  n_estimators: number;
+  random_state: number;
+}
 
 interface TrainingConfig {
   ticker: string;
   start_date: string;
   end_date: string;
-  model_type: string;
-  max_depth: number;
-  min_samples_split: number;
-  min_samples_leaf: number;
+  model_spec: ModelConfig;
+  notes: string;
 }
 
 interface TrainingResponse {
   status: string;
-  model_id: string;
+  run_id: string;
   ticker: string;
   training_metrics: {
     rmse: number;
     mae: number;
     r2_score: number;
+    mape: number;
     training_samples: number;
   };
   prediction: {
@@ -34,6 +43,7 @@ interface TrainingResponse {
     end: string;
     days: number;
   };
+  model_spec: ModelConfig;
   timestamp: string;
 }
 
@@ -49,13 +59,17 @@ export default function StockPricePredictor() {
     ticker: "",
     start_date: "",
     end_date: "",
-    model_type: "decision_tree",
-    max_depth: 5,
-    min_samples_split: 2,
-    min_samples_leaf: 1,
+    model_spec: {
+      model_type: "decision_tree",
+      max_depth: 5,
+      min_samples_split: 2,
+      min_samples_leaf: 1,
+      n_estimators: 100,
+      random_state: 42,
+    },
+    notes: "",
   });
 
-  // Load available tickers
   useEffect(() => {
     fetch("http://127.0.0.1:8000/api/available-tickers")
       .then(res => res.json())
@@ -123,6 +137,13 @@ export default function StockPricePredictor() {
       }))
     : [];
 
+  const handleModelConfigChange = (field: keyof ModelConfig, value: number | string) => {
+    setConfig({
+      ...config,
+      model_spec: { ...config.model_spec, [field]: value }
+    });
+  };
+
   return (
     <div className="p-6 max-w-6xl mx-auto">
       <h1 className="text-3xl font-bold mb-6">ML Model Training</h1>
@@ -172,20 +193,20 @@ export default function StockPricePredictor() {
                 <div className="p-3 text-gray-500">Loading tickers...</div>
               ) : (
                 <select
-                    className="w-full p-3 border rounded-lg"
-                    value={config.ticker}
-                    onChange={(e) =>
-                      setConfig({ ...config, ticker: e.target.value })
-                    }
-                    title="Choose a stock ticker"
-                  >
-                    <option value="">Select a ticker...</option>
-                    {tickers.map((ticker) => (
-                      <option key={ticker} value={ticker}>
-                        {ticker}
-                      </option>
-                    ))}
-                  </select>
+                  className="w-full p-3 border rounded-lg"
+                  value={config.ticker}
+                  onChange={(e) =>
+                    setConfig({ ...config, ticker: e.target.value })
+                  }
+                  title="Choose a stock ticker"
+                >
+                  <option value="">Select a ticker...</option>
+                  {tickers.map((ticker) => (
+                    <option key={ticker} value={ticker}>
+                      {ticker}
+                    </option>
+                  ))}
+                </select>
               )}
             </div>
           </div>
@@ -263,99 +284,138 @@ export default function StockPricePredictor() {
       {/* Step 3: Configure Model */}
       {step === 3 && (
         <div className="bg-white p-6 rounded-lg shadow-md">
-          <h2 className="text-xl font-semibold mb-4">
-            Step 3: Configure Model
-          </h2>
+          <h2 className="text-xl font-semibold mb-4">Step 3: Configure Model</h2>
+          
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium mb-2">
-                Model Type
-              </label>
+              <label className="block text-sm font-medium mb-2">Model Type</label>
               <select
-                className="w-full p-3 border rounded-lg bg-gray-100"
-                value={config.model_type}
-                disabled
-                title="Currently only Decision Tree model is supported"
+                className="w-full p-3 border rounded-lg"
+                value={config.model_spec.model_type}
+                onChange={(e) => handleModelConfigChange('model_type', e.target.value)}
+                title="Select the machine learning model type"
               >
-                <option value="decision_tree">Decision Tree</option>
+                <option value="decision_tree">Decision Tree Regressor</option>
+                <option value="random_forest">Random Forest Regressor</option>
+                <option value="linear_regression">Linear Regression</option>
               </select>
               <p className="text-xs text-gray-500 mt-1">
-                More models coming soon
+                {config.model_spec.model_type === 'decision_tree' && 'Single decision tree - fast, interpretable'}
+                {config.model_spec.model_type === 'random_forest' && 'Ensemble of trees - more accurate, slower'}
+                {config.model_spec.model_type === 'linear_regression' && 'Simple linear model - baseline'}
               </p>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium mb-2">
-                Max Depth: {config.max_depth}
-              </label>
-              <input
-                type="range"
-                min="2"
-                max="20"
-                value={config.max_depth}
-                onChange={(e) =>
-                  setConfig({
-                    ...config,
-                    max_depth: parseInt(e.target.value),
-                  })
-                }
-                className="w-full"
-                placeholder="Set max depth"
-                title="Set the maximum depth for the decision tree"
-              />
-              <p className="text-xs text-gray-500">
-                Maximum depth of the tree. Higher values may overfit.
-              </p>
-            </div>
+            {config.model_spec.model_type === 'random_forest' && (
+              <div>
+                <label className="block text-sm font-medium mb-2">
+                  Number of Trees: {config.model_spec.n_estimators}
+                </label>
+                <input
+                  type="range"
+                  min="10"
+                  max="500"
+                  step="10"
+                  value={config.model_spec.n_estimators}
+                  onChange={(e) => handleModelConfigChange('n_estimators', parseInt(e.target.value))}
+                  className="w-full"
+                  title="Number of trees in the forest"
+                />
+                <p className="text-xs text-gray-500">
+                  More trees = better accuracy but slower training
+                </p>
+              </div>
+            )}
+
+            {(config.model_spec.model_type === 'decision_tree' || config.model_spec.model_type === 'random_forest') && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Max Depth: {config.model_spec.max_depth}
+                  </label>
+                  <input
+                    type="range"
+                    min="2"
+                    max="20"
+                    value={config.model_spec.max_depth}
+                    onChange={(e) => handleModelConfigChange('max_depth', parseInt(e.target.value))}
+                    className="w-full"
+                    title="Maximum depth of the tree(s)"
+                  />
+                  <p className="text-xs text-gray-500">
+                    Maximum depth of the tree. Higher values may overfit.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Min Samples Split: {config.model_spec.min_samples_split}
+                  </label>
+                  <input
+                    type="range"
+                    min="2"
+                    max="20"
+                    value={config.model_spec.min_samples_split}
+                    onChange={(e) => handleModelConfigChange('min_samples_split', parseInt(e.target.value))}
+                    className="w-full"
+                    title="Minimum samples required to split a node"
+                  />
+                  <p className="text-xs text-gray-500">
+                    Minimum samples required to split an internal node.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Min Samples Leaf: {config.model_spec.min_samples_leaf}
+                  </label>
+                  <input
+                    type="range"
+                    min="1"
+                    max="10"
+                    value={config.model_spec.min_samples_leaf}
+                    onChange={(e) => handleModelConfigChange('min_samples_leaf', parseInt(e.target.value))}
+                    className="w-full"
+                    title="Minimum samples required at a leaf node"
+                  />
+                  <p className="text-xs text-gray-500">
+                    Minimum samples required at a leaf node.
+                  </p>
+                </div>
+              </>
+            )}
 
             <div>
-              <label className="block text-sm font-medium mb-2">
-                Min Samples Split: {config.min_samples_split}
-              </label>
-              <input
-                type="range"
-                min="2"
-                max="20"
-                value={config.min_samples_split}
-                onChange={(e) =>
-                  setConfig({
-                    ...config,
-                    min_samples_split: parseInt(e.target.value),
-                  })
-                }
-                className="w-full"
-                placeholder="Set range"
-                title="Set the minimum samples required to split a node"
+              <label className="block text-sm font-medium mb-2">Notes (Optional)</label>
+              <textarea
+                className="w-full p-3 border rounded-lg"
+                rows={3}
+                value={config.notes}
+                onChange={(e) => setConfig({ ...config, notes: e.target.value })}
+                placeholder="Add notes about this training run..."
               />
-              <p className="text-xs text-gray-500">
-                Minimum samples required to split a node.
-              </p>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium mb-2">
-                Min Samples Leaf: {config.min_samples_leaf}
-              </label>
-              <input
-                type="range"
-                min="1"
-                max="10"
-                value={config.min_samples_leaf}
-                onChange={(e) =>
-                  setConfig({
-                    ...config,
-                    min_samples_leaf: parseInt(e.target.value),
-                  })
-                }
-                className="w-full"
-                placeholder="Set range"
-                title="Set the minimum samples required at a leaf node"
-              />
-              <p className="text-xs text-gray-500">
-                Minimum samples required at a leaf node.
-              </p>
+            <div className="bg-blue-50 p-4 rounded-lg">
+              <h4 className="font-semibold text-sm mb-2">Training Summary</h4>
+              <div className="text-xs space-y-1">
+                <p><strong>Stock:</strong> {config.ticker}</p>
+                <p><strong>Period:</strong> {config.start_date} to {config.end_date}</p>
+                <p><strong>Model:</strong> {config.model_spec.model_type}</p>
+                {config.model_spec.model_type === 'random_forest' && (
+                  <p><strong>Trees:</strong> {config.model_spec.n_estimators}</p>
+                )}
+                {(config.model_spec.model_type === 'decision_tree' || config.model_spec.model_type === 'random_forest') && (
+                  <>
+                    <p><strong>Max Depth:</strong> {config.model_spec.max_depth}</p>
+                    <p><strong>Min Split:</strong> {config.model_spec.min_samples_split}</p>
+                    <p><strong>Min Leaf:</strong> {config.model_spec.min_samples_leaf}</p>
+                  </>
+                )}
+              </div>
             </div>
           </div>
+
           <div className="mt-6 flex justify-between">
             <button
               onClick={handleBack}
@@ -374,202 +434,151 @@ export default function StockPricePredictor() {
       )}
 
       {/* Step 4: Train & Results */}
-      {step === 4 && (
+      {step === 4 && !trainingResult && !error && (
         <div className="bg-white p-6 rounded-lg shadow-md">
-          <h2 className="text-xl font-semibold mb-4">
-            Step 4: Train Model & View Results
-          </h2>
+          <h2 className="text-xl font-semibold mb-4">Step 4: Train Model</h2>
+          <div className="text-center py-8">
+            {!isTraining ? (
+              <>
+                <p className="text-gray-600 mb-6">
+                  Ready to train your model with the selected configuration.
+                </p>
+                <div className="flex justify-center gap-4">
+                  <button
+                    onClick={handleBack}
+                    className="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+                  >
+                    Back
+                  </button>
+                  <button
+                    onClick={handleTrain}
+                    className="px-8 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold"
+                  >
+                    Start Training
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                <p className="text-gray-600">Training model... This may take a moment.</p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
-          {!trainingResult && !isTraining && !error && (
-            <div className="space-y-4">
+      {/* Error Display */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 p-6 rounded-lg">
+          <h3 className="text-red-800 font-semibold mb-2">Training Error</h3>
+          <p className="text-red-600 mb-4">{error}</p>
+          <div className="flex gap-4">
+            <button
+              onClick={handleBack}
+              className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+            >
+              Go Back
+            </button>
+            <button
+              onClick={resetTraining}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              Start Over
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Training Results */}
+      {trainingResult && (
+        <div className="space-y-6">
+          <div className="bg-green-50 border border-green-200 p-6 rounded-lg">
+            <h3 className="text-green-800 font-semibold mb-2">✓ Training Complete</h3>
+            <p className="text-green-700">
+              Run ID: <span className="font-mono text-sm">{trainingResult.run_id}</span>
+            </p>
+            <p className="text-sm text-green-600 mt-1">
+              Results have been saved to training_results.json
+            </p>
+          </div>
+
+          {/* Prediction */}
+          <div className="bg-white p-6 rounded-lg shadow-md">
+            <h3 className="text-xl font-semibold mb-4">Next Day Prediction</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <div className="text-sm text-gray-600">Prediction Date</div>
+                <div className="text-lg font-semibold">{trainingResult.prediction.date}</div>
+              </div>
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <div className="text-sm text-gray-600">Last Close</div>
+                <div className="text-lg font-semibold">${trainingResult.prediction.last_close}</div>
+              </div>
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <div className="text-sm text-gray-600">Predicted Close</div>
+                <div className="text-lg font-semibold">${trainingResult.prediction.predicted_close}</div>
+              </div>
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <div className="text-sm text-gray-600">Expected Change</div>
+                <div className={`text-lg font-semibold ${trainingResult.prediction.predicted_change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {trainingResult.prediction.predicted_change >= 0 ? '+' : ''}{trainingResult.prediction.predicted_change_pct.toFixed(2)}%
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Training Metrics */}
+          <div className="bg-white p-6 rounded-lg shadow-md">
+            <h3 className="text-xl font-semibold mb-4">Training Metrics</h3>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <div className="bg-blue-50 p-4 rounded-lg">
-                <h3 className="font-semibold mb-2">Training Configuration</h3>
-                <div className="text-sm space-y-1">
-                  <p>
-                    <strong>Ticker:</strong> {config.ticker}
-                  </p>
-                  <p>
-                    <strong>Period:</strong> {config.start_date} to{" "}
-                    {config.end_date}
-                  </p>
-                  <p>
-                    <strong>Model:</strong> {config.model_type}
-                  </p>
-                  <p>
-                    <strong>Max Depth:</strong> {config.max_depth}
-                  </p>
-                </div>
+                <div className="text-sm text-gray-600">RMSE</div>
+                <div className="text-lg font-semibold">{trainingResult.training_metrics.rmse.toFixed(4)}</div>
               </div>
-              <div className="flex space-x-4">
-                <button
-                  onClick={handleBack}
-                  className="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
-                >
-                  Back
-                </button>
-                <button
-                  onClick={handleTrain}
-                  className="flex-1 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold"
-                >
-                  Start Training
-                </button>
+              <div className="bg-blue-50 p-4 rounded-lg">
+                <div className="text-sm text-gray-600">MAE</div>
+                <div className="text-lg font-semibold">{trainingResult.training_metrics.mae.toFixed(4)}</div>
               </div>
+              <div className="bg-blue-50 p-4 rounded-lg">
+                <div className="text-sm text-gray-600">R² Score</div>
+                <div className="text-lg font-semibold">{trainingResult.training_metrics.r2_score.toFixed(4)}</div>
+              </div>
+              <div className="bg-blue-50 p-4 rounded-lg">
+                <div className="text-sm text-gray-600">MAPE</div>
+                <div className="text-lg font-semibold">{trainingResult.training_metrics.mape.toFixed(2)}%</div>
+              </div>
+              <div className="bg-blue-50 p-4 rounded-lg">
+                <div className="text-sm text-gray-600">Samples</div>
+                <div className="text-lg font-semibold">{trainingResult.training_metrics.training_samples}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Feature Importance */}
+          {featureImportanceData.length > 0 && (
+            <div className="bg-white p-6 rounded-lg shadow-md">
+              <h3 className="text-xl font-semibold mb-4">Top 10 Feature Importance</h3>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={featureImportanceData}>
+                  <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
+                  <YAxis />
+                  <Tooltip />
+                  <Bar dataKey="importance" fill="#3b82f6" />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
           )}
 
-          {isTraining && (
-            <div className="text-center py-12">
-              <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
-              <p className="text-lg font-semibold">Training model...</p>
-              <p className="text-sm text-gray-600 mt-2">
-                This may take a few moments
-              </p>
-            </div>
-          )}
-
-          {error && (
-            <div className="bg-red-50 border border-red-200 p-4 rounded-lg">
-              <p className="text-red-600 font-semibold">Training Failed</p>
-              <p className="text-sm text-red-600 mt-1">{error}</p>
-              <button
-                onClick={() => {
-                  setError(null);
-                  setTrainingResult(null);
-                }}
-                className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-              >
-                Try Again
-              </button>
-            </div>
-          )}
-
-          {trainingResult && (
-            <div className="space-y-6">
-              {/* Success Message */}
-              <div className="bg-green-50 border border-green-200 p-4 rounded-lg">
-                <p className="text-green-800 font-semibold">
-                  ✓ Training Completed Successfully
-                </p>
-                <p className="text-sm text-green-700 mt-1">
-                  Model ID: {trainingResult.model_id}
-                </p>
-              </div>
-
-              {/* Prediction Card */}
-              <div className="bg-gradient-to-r from-blue-50 to-purple-50 p-6 rounded-lg border">
-                <h3 className="text-lg font-semibold mb-4">
-                  Next Day Prediction
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-gray-600">Prediction Date</p>
-                    <p className="text-2xl font-bold">
-                      {trainingResult.prediction.date}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Predicted Close</p>
-                    <p className="text-2xl font-bold text-blue-600">
-                      ${trainingResult.prediction.predicted_close}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Last Close</p>
-                    <p className="text-xl">
-                      ${trainingResult.prediction.last_close}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Predicted Change</p>
-                    <p
-                      className={`text-xl font-semibold ${
-                        trainingResult.prediction.predicted_change >= 0
-                          ? "text-green-600"
-                          : "text-red-600"
-                      }`}
-                    >
-                      {trainingResult.prediction.predicted_change >= 0
-                        ? "+"
-                        : ""}
-                      ${trainingResult.prediction.predicted_change} (
-                      {trainingResult.prediction.predicted_change_pct.toFixed(
-                        2
-                      )}
-                      %)
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Training Metrics */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="bg-white p-4 rounded-lg border">
-                  <p className="text-sm text-gray-600">RMSE</p>
-                  <p className="text-xl font-bold">
-                    {trainingResult.training_metrics.rmse}
-                  </p>
-                </div>
-                <div className="bg-white p-4 rounded-lg border">
-                  <p className="text-sm text-gray-600">MAE</p>
-                  <p className="text-xl font-bold">
-                    {trainingResult.training_metrics.mae}
-                  </p>
-                </div>
-                <div className="bg-white p-4 rounded-lg border">
-                  <p className="text-sm text-gray-600">R² Score</p>
-                  <p className="text-xl font-bold">
-                    {trainingResult.training_metrics.r2_score}
-                  </p>
-                </div>
-                <div className="bg-white p-4 rounded-lg border">
-                  <p className="text-sm text-gray-600">Training Samples</p>
-                  <p className="text-xl font-bold">
-                    {trainingResult.training_metrics.training_samples}
-                  </p>
-                </div>
-              </div>
-
-              {/* Feature Importance */}
-              <div className="bg-white p-6 rounded-lg border">
-                <h3 className="text-lg font-semibold mb-4">
-                  Top Feature Importance
-                </h3>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={featureImportanceData}>
-                    <XAxis
-                      dataKey="name"
-                      angle={-45}
-                      textAnchor="end"
-                      height={100}
-                    />
-                    <YAxis />
-                    <Tooltip />
-                    <Bar dataKey="importance" fill="#3b82f6" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-
-              {/* Training Period Info */}
-              <div className="bg-gray-50 p-4 rounded-lg text-sm">
-                <p>
-                  <strong>Training Period:</strong>{" "}
-                  {trainingResult.training_period.start} to{" "}
-                  {trainingResult.training_period.end} (
-                  {trainingResult.training_period.days} days)
-                </p>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex space-x-4">
-                <button
-                  onClick={resetTraining}
-                  className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold"
-                >
-                  Train New Model
-                </button>
-              </div>
-            </div>
-          )}
+          {/* Actions */}
+          <div className="flex justify-center gap-4">
+            <button
+              onClick={resetTraining}
+              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              Train Another Model
+            </button>
+          </div>
         </div>
       )}
     </div>

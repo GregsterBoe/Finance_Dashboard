@@ -70,3 +70,4 @@ lerna-debug.log*
 backend/data/rss/matched.json
 backend/data/rss/matched_export.json
 backend/data/rss/rss_semantic.db
+backend/training_results.json

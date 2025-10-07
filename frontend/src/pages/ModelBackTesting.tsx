@@ -1,6 +1,15 @@
 import { useState, useEffect } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
+interface ModelConfig {
+  model_type: string;
+  max_depth: number;
+  min_samples_split: number;
+  min_samples_leaf: number;
+  n_estimators: number;
+  random_state: number;
+}
+
 interface BacktestConfig {
   ticker: string;
   backtest_mode: string;
@@ -8,11 +17,9 @@ interface BacktestConfig {
   backtest_start_date?: string;
   backtest_end_date?: string;
   training_history_days: number;
-  model_type: string;
-  max_depth: number;
-  min_samples_split: number;
-  min_samples_leaf: number;
+  model_spec: ModelConfig;  // ← Changed from flat structure
   retrain_for_each_prediction: boolean;
+  notes: string;
 }
 
 interface BacktestResult {
@@ -26,6 +33,7 @@ interface BacktestResult {
 
 interface BacktestResponse {
   status: string;
+  run_id: string;
   ticker: string;
   backtest_period: {
     start: string;
@@ -41,16 +49,9 @@ interface BacktestResponse {
     mape: number;
     r2_score: number;
     directional_accuracy: number;
-    total_predictions: number;
-    avg_error: number;
-    avg_error_pct: number;
+    training_samples: number;
   };
-  model_config: {
-    model_type: string;
-    max_depth: number;
-    min_samples_split: number;
-    min_samples_leaf: number;
-  };
+  model_spec: ModelConfig;
   timestamp: string;
 }
 
@@ -67,11 +68,16 @@ export default function ModelBacktesting() {
     backtest_mode: "standard",
     backtest_days: 30,
     training_history_days: 90,
-    model_type: "decision_tree",
-    max_depth: 5,
-    min_samples_split: 2,
-    min_samples_leaf: 1,
+    model_spec: {  // ← Nested structure
+      model_type: "decision_tree",
+      max_depth: 5,
+      min_samples_split: 2,
+      min_samples_leaf: 1,
+      n_estimators: 100,
+      random_state: 42,
+    },
     retrain_for_each_prediction: false,
+    notes: "",
   });
 
   useEffect(() => {
@@ -154,6 +160,14 @@ export default function ModelBacktesting() {
         error_pct: p.error_pct,
       }))
     : [];
+
+  // Helper function to update model config
+  const handleModelConfigChange = (field: keyof ModelConfig, value: number | string) => {
+    setConfig({
+      ...config,
+      model_spec: { ...config.model_spec, [field]: value }
+    });
+  };
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
@@ -405,72 +419,98 @@ export default function ModelBacktesting() {
                 Model Type
               </label>
               <select
-                className="w-full p-3 border rounded-lg bg-gray-100"
-                value={config.model_type}
-                disabled
-                title="Currently only Decision Tree model is supported"
+                className="w-full p-3 border rounded-lg"
+                value={config.model_spec.model_type}
+                onChange={(e) => handleModelConfigChange('model_type', e.target.value)}
+                title="Select model type"
               >
                 <option value="decision_tree">Decision Tree Regressor</option>
+                <option value="random_forest">Random Forest Regressor</option>
+                <option value="linear_regression">Linear Regression</option>
               </select>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium mb-2">
-                Max Depth: {config.max_depth}
-              </label>
-              <input
-                type="range"
-                min="2"
-                max="20"
-                value={config.max_depth}
-                onChange={(e) =>
-                  setConfig({
-                    ...config,
-                    max_depth: parseInt(e.target.value),
-                  })
-                }
-                className="w-full"
-                title="Set max depth"
-              />
-            </div>
+            {config.model_spec.model_type === 'random_forest' && (
+              <div>
+                <label className="block text-sm font-medium mb-2">
+                  Number of Trees: {config.model_spec.n_estimators}
+                </label>
+                <input
+                  type="range"
+                  min="10"
+                  max="500"
+                  step="10"
+                  value={config.model_spec.n_estimators}
+                  onChange={(e) => handleModelConfigChange('n_estimators', parseInt(e.target.value))}
+                  className="w-full"
+                  title="Set number of trees"
+                />
+              </div>
+            )}
+
+            {(config.model_spec.model_type === 'decision_tree' || config.model_spec.model_type === 'random_forest') && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Max Depth: {config.model_spec.max_depth}
+                  </label>
+                  <input
+                    type="range"
+                    min="2"
+                    max="20"
+                    value={config.model_spec.max_depth}
+                    onChange={(e) =>
+                      handleModelConfigChange('max_depth', parseInt(e.target.value))
+                    }
+                    className="w-full"
+                    title="Set max depth"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Min Samples Split: {config.model_spec.min_samples_split}
+                  </label>
+                  <input
+                    type="range"
+                    min="2"
+                    max="20"
+                    value={config.model_spec.min_samples_split}
+                    onChange={(e) =>
+                      handleModelConfigChange('min_samples_split', parseInt(e.target.value))
+                    }
+                    className="w-full"
+                    title="Set min samples split"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Min Samples Leaf: {config.model_spec.min_samples_leaf}
+                  </label>
+                  <input
+                    type="range"
+                    min="1"
+                    max="10"
+                    value={config.model_spec.min_samples_leaf}
+                    onChange={(e) =>
+                      handleModelConfigChange('min_samples_leaf', parseInt(e.target.value))
+                    }
+                    className="w-full"
+                    title="Set min samples leaf"
+                  />
+                </div>
+              </>
+            )}
 
             <div>
-              <label className="block text-sm font-medium mb-2">
-                Min Samples Split: {config.min_samples_split}
-              </label>
-              <input
-                type="range"
-                min="2"
-                max="20"
-                value={config.min_samples_split}
-                onChange={(e) =>
-                  setConfig({
-                    ...config,
-                    min_samples_split: parseInt(e.target.value),
-                  })
-                }
-                className="w-full"
-                title="Set min samples split"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-2">
-                Min Samples Leaf: {config.min_samples_leaf}
-              </label>
-              <input
-                type="range"
-                min="1"
-                max="10"
-                value={config.min_samples_leaf}
-                onChange={(e) =>
-                  setConfig({
-                    ...config,
-                    min_samples_leaf: parseInt(e.target.value),
-                  })
-                }
-                className="w-full"
-                title="Set min samples leaf"
+              <label className="block text-sm font-medium mb-2">Notes (Optional)</label>
+              <textarea
+                className="w-full p-3 border rounded-lg"
+                rows={3}
+                value={config.notes}
+                onChange={(e) => setConfig({ ...config, notes: e.target.value })}
+                placeholder="Add notes about this backtest..."
               />
             </div>
           </div>
@@ -491,14 +531,20 @@ export default function ModelBacktesting() {
         </div>
       )}
 
-            {/* Step 4: Run & Results */}
+      {/* Step 4: Run & Results */}
       {step === 4 && (
         <div className="bg-white p-6 rounded-lg shadow-md">
           <h2 className="text-xl font-semibold mb-4">Step 4: Run Backtest & View Results</h2>
 
           {/* Run button */}
-          {!backtestResult && !isBacktesting && (
-            <div className="flex justify-center">
+          {!backtestResult && !isBacktesting && !error && (
+            <div className="flex justify-center space-x-4">
+              <button
+                onClick={handleBack}
+                className="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+              >
+                Back
+              </button>
               <button
                 onClick={handleBacktest}
                 className="px-8 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
@@ -519,40 +565,63 @@ export default function ModelBacktesting() {
           {/* Error */}
           {error && (
             <div className="p-4 mb-4 bg-red-100 text-red-700 rounded-lg">
+              <p className="font-semibold mb-2">Error:</p>
               <p>{error}</p>
-              <button
-                onClick={resetBacktest}
-                className="mt-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-              >
-                Restart
-              </button>
+              <div className="flex space-x-2 mt-4">
+                <button
+                  onClick={handleBack}
+                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+                >
+                  Go Back
+                </button>
+                <button
+                  onClick={resetBacktest}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+                >
+                  Start Over
+                </button>
+              </div>
             </div>
           )}
 
           {/* Results */}
           {backtestResult && (
             <div className="space-y-8">
+              {/* Success Banner */}
+              <div className="bg-green-50 border border-green-200 p-4 rounded-lg">
+                <h3 className="text-green-800 font-semibold mb-2">✓ Backtest Complete</h3>
+                <p className="text-green-700 text-sm">
+                  Run ID: <span className="font-mono">{backtestResult.run_id}</span>
+                </p>
+                <p className="text-sm text-green-600 mt-1">
+                  Results saved to training_results.json
+                </p>
+              </div>
+
               {/* Metrics Summary */}
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                <div className="p-4 bg-gray-50 rounded-lg shadow-sm">
-                  <p className="text-sm text-gray-600">MAE</p>
-                  <p className="text-lg font-bold">{backtestResult.summary_metrics.mae.toFixed(4)}</p>
-                </div>
-                <div className="p-4 bg-gray-50 rounded-lg shadow-sm">
-                  <p className="text-sm text-gray-600">RMSE</p>
-                  <p className="text-lg font-bold">{backtestResult.summary_metrics.rmse.toFixed(4)}</p>
-                </div>
-                <div className="p-4 bg-gray-50 rounded-lg shadow-sm">
-                  <p className="text-sm text-gray-600">MAPE</p>
-                  <p className="text-lg font-bold">{(backtestResult.summary_metrics.mape * 100).toFixed(2)}%</p>
-                </div>
-                <div className="p-4 bg-gray-50 rounded-lg shadow-sm">
-                  <p className="text-sm text-gray-600">R² Score</p>
-                  <p className="text-lg font-bold">{backtestResult.summary_metrics.r2_score.toFixed(4)}</p>
-                </div>
-                <div className="p-4 bg-gray-50 rounded-lg shadow-sm">
-                  <p className="text-sm text-gray-600">Directional Accuracy</p>
-                  <p className="text-lg font-bold">{(backtestResult.summary_metrics.directional_accuracy * 100).toFixed(2)}%</p>
+              <div>
+                <h3 className="text-lg font-semibold mb-4">Summary Metrics</h3>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                  <div className="p-4 bg-purple-50 rounded-lg shadow-sm">
+                    <p className="text-sm text-gray-600">MAE</p>
+                    <p className="text-lg font-bold">{backtestResult.summary_metrics.mae.toFixed(4)}</p>
+                  </div>
+                  <div className="p-4 bg-purple-50 rounded-lg shadow-sm">
+                    <p className="text-sm text-gray-600">RMSE</p>
+                    <p className="text-lg font-bold">{backtestResult.summary_metrics.rmse.toFixed(4)}</p>
+                  </div>
+                  <div className="p-4 bg-purple-50 rounded-lg shadow-sm">
+                    <p className="text-sm text-gray-600">MAPE</p>
+                    <p className="text-lg font-bold">{backtestResult.summary_metrics.mape.toFixed(2)}%</p>
+                  </div>
+                  <div className="p-4 bg-purple-50 rounded-lg shadow-sm">
+                    <p className="text-sm text-gray-600">R² Score</p>
+                    <p className="text-lg font-bold">{backtestResult.summary_metrics.r2_score.toFixed(4)}</p>
+                  </div>
+                  <div className="p-4 bg-purple-50 rounded-lg shadow-sm">
+                    <p className="text-sm text-gray-600">Directional Accuracy</p>
+                    <p className="text-lg font-bold">{backtestResult.summary_metrics.directional_accuracy.toFixed(2)}%</p>
+                  </div>
                 </div>
               </div>
 
@@ -566,8 +635,8 @@ export default function ModelBacktesting() {
                       <YAxis />
                       <Tooltip />
                       <Legend />
-                      <Line type="monotone" dataKey="actual" stroke="#4F46E5" name="Actual" />
-                      <Line type="monotone" dataKey="predicted" stroke="#10B981" name="Predicted" />
+                      <Line type="monotone" dataKey="actual" stroke="#4F46E5" name="Actual" strokeWidth={2} />
+                      <Line type="monotone" dataKey="predicted" stroke="#10B981" name="Predicted" strokeWidth={2} strokeDasharray="5 5" />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -583,9 +652,42 @@ export default function ModelBacktesting() {
                       <YAxis />
                       <Tooltip />
                       <Legend />
-                      <Line type="monotone" dataKey="error_pct" stroke="#EF4444" name="Error %" />
+                      <Line type="monotone" dataKey="error_pct" stroke="#EF4444" name="Error %" strokeWidth={2} />
                     </LineChart>
                   </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Configuration Details */}
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <h3 className="text-lg font-semibold mb-3">Backtest Configuration</h3>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <span className="text-gray-600">Period:</span>
+                    <span className="ml-2 font-medium">
+                      {backtestResult.backtest_period.start} to {backtestResult.backtest_period.end}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Total Days:</span>
+                    <span className="ml-2 font-medium">{backtestResult.backtest_period.total_days}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Training History:</span>
+                    <span className="ml-2 font-medium">{backtestResult.backtest_period.training_history_days} days</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Retrain Each:</span>
+                    <span className="ml-2 font-medium">{backtestResult.backtest_period.retrain_for_each ? "Yes" : "No"}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Model:</span>
+                    <span className="ml-2 font-medium">{backtestResult.model_spec.model_type}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Max Depth:</span>
+                    <span className="ml-2 font-medium">{backtestResult.model_spec.max_depth}</span>
+                  </div>
                 </div>
               </div>
 
@@ -593,7 +695,7 @@ export default function ModelBacktesting() {
               <div className="flex justify-center">
                 <button
                   onClick={resetBacktest}
-                  className="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+                  className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
                 >
                   Start New Backtest
                 </button>
@@ -602,7 +704,6 @@ export default function ModelBacktesting() {
           )}
         </div>
       )}
-
     </div>
   );
 }

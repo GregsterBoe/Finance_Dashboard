@@ -1,13 +1,21 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import datetime, timedelta
+import sklearn
 import yfinance as yf
 import numpy as np
 from sklearn.tree import DecisionTreeRegressor
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from typing import Dict, Any, List, Optional
 import pandas as pd
+
+from models.ml_models import (
+    ModelConfig, ModelType, TrainingMetrics, PredictionResult,
+    TrainingResult, ResultsManager, generate_run_id
+)
 
 router = APIRouter()
 
@@ -15,19 +23,18 @@ class TrainingConfig(BaseModel):
     ticker: str
     start_date: str
     end_date: str
-    model_type: str = "decision_tree"
-    max_depth: Optional[int] = 5
-    min_samples_split: Optional[int] = 2
-    min_samples_leaf: Optional[int] = 1
+    model_spec: ModelConfig
+    notes: Optional[str] = None
 
 class TrainingResponse(BaseModel):
     status: str
-    model_id: str
+    run_id: str
     ticker: str
-    training_metrics: Dict[str, float]
-    prediction: Dict[str, Any]
+    training_metrics: TrainingMetrics
+    prediction: PredictionResult
     feature_importance: Dict[str, float]
     training_period: Dict[str, Any]
+    model_spec: ModelConfig
     timestamp: str
 
 def create_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -83,6 +90,28 @@ def prepare_training_data(df: pd.DataFrame):
     
     return X, y, feature_cols
 
+def create_model(config: ModelConfig):
+    """Create a model instance based on configuration"""
+    if config.model_type == ModelType.DECISION_TREE:
+        return DecisionTreeRegressor(
+            max_depth=config.max_depth,
+            min_samples_split=config.min_samples_split,
+            min_samples_leaf=config.min_samples_leaf,
+            random_state=config.random_state
+        )
+    elif config.model_type == ModelType.RANDOM_FOREST:
+        return RandomForestRegressor(
+            n_estimators=config.n_estimators,
+            max_depth=config.max_depth,
+            min_samples_split=config.min_samples_split,
+            min_samples_leaf=config.min_samples_leaf,
+            random_state=config.random_state
+        )
+    elif config.model_type == ModelType.LINEAR_REGRESSION:
+        return LinearRegression()
+    else:
+        raise ValueError(f"Unsupported model type: {config.model_type}")
+
 @router.post("/train-model", response_model=TrainingResponse)
 async def train_model(config: TrainingConfig):
     """Train a machine learning model for stock price prediction"""
@@ -126,17 +155,8 @@ async def train_model(config: TrainingConfig):
         X_train_scaled = scaler.fit_transform(X_train)
         X_predict_scaled = scaler.transform(X_predict)
         
-        # Train model based on config
-        if config.model_type == "decision_tree":
-            model = DecisionTreeRegressor(
-                max_depth=config.max_depth,
-                min_samples_split=config.min_samples_split,
-                min_samples_leaf=config.min_samples_leaf,
-                random_state=42
-            )
-        else:
-            raise HTTPException(status_code=400, detail=f"Unsupported model type: {config.model_type}")
-        
+        # Train model
+        model = create_model(config.model_spec)
         model.fit(X_train_scaled, y_train)
         
         # Make predictions on training set for metrics
@@ -148,6 +168,9 @@ async def train_model(config: TrainingConfig):
         mae = mean_absolute_error(y_train, y_train_pred)
         r2 = r2_score(y_train, y_train_pred)
         
+        # Calculate MAPE
+        mape = np.mean(np.abs((y_train - y_train_pred) / y_train)) * 100
+        
         # Make prediction for next day
         next_day_prediction = model.predict(X_predict_scaled)[0]
         
@@ -157,45 +180,72 @@ async def train_model(config: TrainingConfig):
         predicted_change_pct = (predicted_change / last_close) * 100
         
         # Feature importance
-        feature_importance = dict(zip(feature_cols, model.feature_importances_))
-        # Sort by importance and take top 10
-        feature_importance = dict(sorted(feature_importance.items(), 
-                                       key=lambda x: x[1], 
-                                       reverse=True)[:10])
+        if hasattr(model, 'feature_importances_'):
+            feature_importance = dict(zip(feature_cols, model.feature_importances_))
+            feature_importance = dict(sorted(feature_importance.items(), 
+                                           key=lambda x: x[1], 
+                                           reverse=True)[:10])
+        else:
+            feature_importance = {}
         
-        # Generate model ID
-        model_id = f"{config.ticker}_{config.model_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        # Generate run ID
+        run_id = generate_run_id(config.ticker, "training")
         
         # Get prediction date
         last_date = df.index[-1]
         prediction_date = last_date + timedelta(days=1)
-        # Skip weekends
         while prediction_date.weekday() >= 5:
             prediction_date += timedelta(days=1)
         
+        # Create response objects
+        training_metrics = TrainingMetrics(
+            rmse=round(rmse, 4),
+            mae=round(mae, 4),
+            r2_score=round(r2, 4),
+            mape=round(mape, 4),
+            training_samples=len(X_train)
+        )
+        
+        prediction = PredictionResult(
+            date=prediction_date.strftime("%Y-%m-%d"),
+            predicted_close=round(next_day_prediction, 2),
+            last_close=round(last_close, 2),
+            predicted_change=round(predicted_change, 2),
+            predicted_change_pct=round(predicted_change_pct, 2)
+        )
+        
+        training_period = {
+            "start": config.start_date,
+            "end": config.end_date,
+            "days": len(df)
+        }
+        
+        # Save result to file
+        training_result = TrainingResult(
+            run_id=run_id,
+            run_type="training",
+            timestamp=datetime.now().isoformat(),
+            ticker=config.ticker,
+            model_spec=config.model_spec,
+            training_period=training_period,
+            metrics=training_metrics,
+            prediction=prediction,
+            feature_importance={k: round(v, 4) for k, v in feature_importance.items()},
+            notes=config.notes
+        )
+        
+        results_manager = ResultsManager()
+        results_manager.save_result(training_result)
+        
         return TrainingResponse(
             status="success",
-            model_id=model_id,
+            run_id=run_id,
             ticker=config.ticker,
-            training_metrics={
-                "rmse": round(rmse, 4),
-                "mae": round(mae, 4),
-                "r2_score": round(r2, 4),
-                "training_samples": len(X_train)
-            },
-            prediction={
-                "date": prediction_date.strftime("%Y-%m-%d"),
-                "predicted_close": round(next_day_prediction, 2),
-                "last_close": round(last_close, 2),
-                "predicted_change": round(predicted_change, 2),
-                "predicted_change_pct": round(predicted_change_pct, 2)
-            },
+            training_metrics=training_metrics,
+            prediction=prediction,
             feature_importance={k: round(v, 4) for k, v in feature_importance.items()},
-            training_period={
-                "start": config.start_date,
-                "end": config.end_date,
-                "days": len(df)
-            },
+            training_period=training_period,
+            model_spec=config.model_spec,
             timestamp=datetime.now().isoformat()
         )
         
