@@ -9,7 +9,19 @@ interface ModelConfig {
   min_samples_leaf: number;
   n_estimators: number;
   random_state: number;
+  // LSTM parameters
+  sequence_length: number;
+  hidden_size: number;
+  num_layers: number;
+  dropout: number;
+  learning_rate: number;
+  epochs: number;
+  batch_size: number;
+  validation_sequences: number;  // NEW
+  early_stopping_patience: number;  // NEW
+  use_validation: boolean;  // NEW
 }
+
 
 interface TrainingConfig {
   ticker: string;
@@ -56,19 +68,30 @@ export default function StockPricePredictor() {
   const [error, setError] = useState<string | null>(null);
   
   const [config, setConfig] = useState<TrainingConfig>({
-    ticker: "",
-    start_date: "",
-    end_date: "",
-    model_spec: {
-      model_type: "decision_tree",
-      max_depth: 5,
-      min_samples_split: 2,
-      min_samples_leaf: 1,
-      n_estimators: 100,
-      random_state: 42,
-    },
-    notes: "",
-  });
+  ticker: "",
+  start_date: "",
+  end_date: "",
+  model_spec: {
+    model_type: "decision_tree",
+    max_depth: 5,
+    min_samples_split: 2,
+    min_samples_leaf: 1,
+    n_estimators: 100,
+    random_state: 42,
+    // LSTM defaults
+    sequence_length: 30,
+    hidden_size: 64,
+    num_layers: 2,
+    dropout: 0.2,
+    learning_rate: 0.001,
+    epochs: 100,
+    batch_size: 32,
+    validation_sequences: 30,
+    early_stopping_patience: 10,
+    use_validation: true,
+  },
+  notes: "",
+});
 
   useEffect(() => {
     fetch("http://127.0.0.1:8000/api/available-tickers")
@@ -100,6 +123,9 @@ export default function StockPricePredictor() {
   const handleTrain = async () => {
     setIsTraining(true);
     setError(null);
+
+    console.log("Training config being sent:", JSON.stringify(config, null, 2)); // ADD THIS
+
     
     try {
       const response = await fetch("http://127.0.0.1:8000/api/train-model", {
@@ -137,7 +163,7 @@ export default function StockPricePredictor() {
       }))
     : [];
 
-  const handleModelConfigChange = (field: keyof ModelConfig, value: number | string) => {
+  const handleModelConfigChange = (field: keyof ModelConfig, value: number | string | boolean) => {
     setConfig({
       ...config,
       model_spec: { ...config.model_spec, [field]: value }
@@ -285,7 +311,6 @@ export default function StockPricePredictor() {
       {step === 3 && (
         <div className="bg-white p-6 rounded-lg shadow-md">
           <h2 className="text-xl font-semibold mb-4">Step 3: Configure Model</h2>
-          
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium mb-2">Model Type</label>
@@ -298,137 +323,299 @@ export default function StockPricePredictor() {
                 <option value="decision_tree">Decision Tree Regressor</option>
                 <option value="random_forest">Random Forest Regressor</option>
                 <option value="linear_regression">Linear Regression</option>
+                <option value="lstm">LSTM Neural Network</option>
               </select>
               <p className="text-xs text-gray-500 mt-1">
                 {config.model_spec.model_type === 'decision_tree' && 'Single decision tree - fast, interpretable'}
                 {config.model_spec.model_type === 'random_forest' && 'Ensemble of trees - more accurate, slower'}
                 {config.model_spec.model_type === 'linear_regression' && 'Simple linear model - baseline'}
+                {config.model_spec.model_type === 'lstm' && 'Deep learning - captures temporal patterns, requires more data'}
               </p>
             </div>
 
-            {config.model_spec.model_type === 'random_forest' && (
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  Number of Trees: {config.model_spec.n_estimators}
-                </label>
-                <input
-                  type="range"
-                  min="10"
-                  max="500"
-                  step="10"
-                  value={config.model_spec.n_estimators}
-                  onChange={(e) => handleModelConfigChange('n_estimators', parseInt(e.target.value))}
-                  className="w-full"
-                  title="Number of trees in the forest"
-                />
-                <p className="text-xs text-gray-500">
-                  More trees = better accuracy but slower training
-                </p>
-              </div>
-            )}
-
-            {(config.model_spec.model_type === 'decision_tree' || config.model_spec.model_type === 'random_forest') && (
+            {/* LSTM-specific parameters */}
+            {config.model_spec.model_type === 'lstm' && (
               <>
                 <div>
                   <label className="block text-sm font-medium mb-2">
-                    Max Depth: {config.model_spec.max_depth}
+                    Sequence Length: {config.model_spec.sequence_length}
                   </label>
                   <input
                     type="range"
-                    min="2"
-                    max="20"
-                    value={config.model_spec.max_depth}
-                    onChange={(e) => handleModelConfigChange('max_depth', parseInt(e.target.value))}
+                    min="10"
+                    max="100"
+                    step="5"
+                    value={config.model_spec.sequence_length}
+                    onChange={(e) => handleModelConfigChange('sequence_length', parseInt(e.target.value))}
                     className="w-full"
-                    title="Maximum depth of the tree(s)"
+                    title="Number of past days to use for prediction (lookback window)"
                   />
-                  <p className="text-xs text-gray-500">
-                    Maximum depth of the tree. Higher values may overfit.
+                  <p className="text-xs text-gray-500 mt-1">
+                    Number of past days to use for prediction (lookback window)
                   </p>
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium mb-2">
-                    Min Samples Split: {config.model_spec.min_samples_split}
+                    Hidden Size: {config.model_spec.hidden_size}
                   </label>
                   <input
                     type="range"
-                    min="2"
-                    max="20"
-                    value={config.model_spec.min_samples_split}
-                    onChange={(e) => handleModelConfigChange('min_samples_split', parseInt(e.target.value))}
+                    min="16"
+                    max="256"
+                    step="16"
+                    value={config.model_spec.hidden_size}
+                    onChange={(e) => handleModelConfigChange('hidden_size', parseInt(e.target.value))}
                     className="w-full"
-                    title="Minimum samples required to split a node"
+                    title="Number of LSTM hidden units (model capacity)"
                   />
-                  <p className="text-xs text-gray-500">
-                    Minimum samples required to split an internal node.
+                  <p className="text-xs text-gray-500 mt-1">
+                    Number of LSTM hidden units (model capacity)
                   </p>
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium mb-2">
-                    Min Samples Leaf: {config.model_spec.min_samples_leaf}
+                    Number of Layers: {config.model_spec.num_layers}
                   </label>
                   <input
                     type="range"
                     min="1"
-                    max="10"
-                    value={config.model_spec.min_samples_leaf}
-                    onChange={(e) => handleModelConfigChange('min_samples_leaf', parseInt(e.target.value))}
+                    max="5"
+                    step="1"
+                    value={config.model_spec.num_layers}
+                    onChange={(e) => handleModelConfigChange('num_layers', parseInt(e.target.value))}
                     className="w-full"
-                    title="Minimum samples required at a leaf node"
+                    title="Number of stacked LSTM layers (model depth)"
                   />
-                  <p className="text-xs text-gray-500">
-                    Minimum samples required at a leaf node.
+                  <p className="text-xs text-gray-500 mt-1">
+                    Number of stacked LSTM layers (model depth)
                   </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Epochs: {config.model_spec.epochs}
+                  </label>
+                  <input
+                    type="range"
+                    min="10"
+                    max="500"
+                    step="10"
+                    value={config.model_spec.epochs}
+                    onChange={(e) => handleModelConfigChange('epochs', parseInt(e.target.value))}
+                    className="w-full"
+                    title="Number of training iterations (more = better fit but slower)"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Number of training iterations (more = better fit but slower)
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Learning Rate: {config.model_spec.learning_rate}
+                  </label>
+                  <input
+                    type="range"
+                    min="0.0001"
+                    max="0.01"
+                    step="0.0001"
+                    value={config.model_spec.learning_rate}
+                    onChange={(e) => handleModelConfigChange('learning_rate', parseFloat(e.target.value))}
+                    className="w-full"
+                    title="Step size for model updates (0.001 is typical)"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Step size for model updates (0.001 is typical)
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Validation Sequences: {config.model_spec.validation_sequences}
+                  </label>
+                  <input
+                    type="range"
+                    min="10"
+                    max="100"
+                    step="5"
+                    value={config.model_spec.validation_sequences}
+                    onChange={(e) => handleModelConfigChange('validation_sequences', parseInt(e.target.value))}
+                    className="w-full"
+                    title="Number of sequences to use for validation (fixed, not percentage)"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Number of sequences to use for validation (fixed, not percentage)
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Early Stopping Patience: {config.model_spec.early_stopping_patience}
+                  </label>
+                  <input
+                    type="range"
+                    min="3"
+                    max="30"
+                    step="1"
+                    value={config.model_spec.early_stopping_patience}
+                    onChange={(e) => handleModelConfigChange('early_stopping_patience', parseInt(e.target.value))}
+                    className="w-full"
+                    title="Stop training if validation loss doesn't improve for N epochs"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Stop training if validation loss doesn't improve for N epochs
+                  </p>
+                </div>
+
+                <div className="bg-blue-50 p-4 rounded-lg">
+                  <label className="flex items-center space-x-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={config.model_spec.use_validation}
+                      onChange={(e) => handleModelConfigChange('use_validation', e.target.checked)}
+                      className="w-5 h-5"
+                    />
+                    <div>
+                      <span className="font-medium">Use validation split</span>
+                      <p className="text-xs text-gray-600 mt-1">
+                        If unchecked, trains on all data (for production models). 
+                        Recommended: keep checked for testing.
+                      </p>
+                    </div>
+                  </label>
                 </div>
               </>
             )}
 
-            <div>
-              <label className="block text-sm font-medium mb-2">Notes (Optional)</label>
-              <textarea
-                className="w-full p-3 border rounded-lg"
-                rows={3}
-                value={config.notes}
-                onChange={(e) => setConfig({ ...config, notes: e.target.value })}
-                placeholder="Add notes about this training run..."
-              />
-            </div>
-
-            <div className="bg-blue-50 p-4 rounded-lg">
-              <h4 className="font-semibold text-sm mb-2">Training Summary</h4>
-              <div className="text-xs space-y-1">
-                <p><strong>Stock:</strong> {config.ticker}</p>
-                <p><strong>Period:</strong> {config.start_date} to {config.end_date}</p>
-                <p><strong>Model:</strong> {config.model_spec.model_type}</p>
+            {/* Traditional ML parameters - only show if not LSTM */}
+            {config.model_spec.model_type !== 'lstm' && (
+              <>
                 {config.model_spec.model_type === 'random_forest' && (
-                  <p><strong>Trees:</strong> {config.model_spec.n_estimators}</p>
+                  <div>
+                    <label className="block text-sm font-medium mb-2">
+                      Number of Trees: {config.model_spec.n_estimators}
+                    </label>
+                    <input
+                      type="range"
+                      min="10"
+                      max="500"
+                      step="10"
+                      value={config.model_spec.n_estimators}
+                      onChange={(e) => handleModelConfigChange('n_estimators', parseInt(e.target.value))}
+                      className="w-full"
+                      title="Number of trees in the forest"
+                    />
+                    <p className="text-xs text-gray-500">
+                      More trees = better accuracy but slower training
+                    </p>
+                  </div>
                 )}
+
                 {(config.model_spec.model_type === 'decision_tree' || config.model_spec.model_type === 'random_forest') && (
                   <>
-                    <p><strong>Max Depth:</strong> {config.model_spec.max_depth}</p>
-                    <p><strong>Min Split:</strong> {config.model_spec.min_samples_split}</p>
-                    <p><strong>Min Leaf:</strong> {config.model_spec.min_samples_leaf}</p>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">
+                        Max Depth: {config.model_spec.max_depth}
+                      </label>
+                      <input
+                        type="range"
+                        min="2"
+                        max="20"
+                        value={config.model_spec.max_depth}
+                        onChange={(e) => handleModelConfigChange('max_depth', parseInt(e.target.value))}
+                        className="w-full"
+                        title="Maximum depth of the tree(s)"
+                      />
+                      <p className="text-xs text-gray-500">
+                        Maximum depth of the tree. Higher values may overfit.
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium mb-2">
+                        Min Samples Split: {config.model_spec.min_samples_split}
+                      </label>
+                      <input
+                        type="range"
+                        min="2"
+                        max="20"
+                        value={config.model_spec.min_samples_split}
+                        onChange={(e) => handleModelConfigChange('min_samples_split', parseInt(e.target.value))}
+                        className="w-full"
+                        title="Minimum samples required to split a node"
+                      />
+                      <p className="text-xs text-gray-500">
+                        Minimum samples required to split an internal node.
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium mb-2">
+                        Min Samples Leaf: {config.model_spec.min_samples_leaf}
+                      </label>
+                      <input
+                        type="range"
+                        min="1"
+                        max="10"
+                        value={config.model_spec.min_samples_leaf}
+                        onChange={(e) => handleModelConfigChange('min_samples_leaf', parseInt(e.target.value))}
+                        className="w-full"
+                        title="Minimum samples required at a leaf node"
+                      />
+                      <p className="text-xs text-gray-500">
+                        Minimum samples required at a leaf node.
+                      </p>
+                    </div>
                   </>
                 )}
-              </div>
-            </div>
-          </div>
 
-          <div className="mt-6 flex justify-between">
-            <button
-              onClick={handleBack}
-              className="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
-            >
-              Back
-            </button>
-            <button
-              onClick={handleNext}
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-            >
-              Next
-            </button>
+                <div>
+                  <label className="block text-sm font-medium mb-2">Notes (Optional)</label>
+                  <textarea
+                    className="w-full p-3 border rounded-lg"
+                    rows={3}
+                    value={config.notes}
+                    onChange={(e) => setConfig({ ...config, notes: e.target.value })}
+                    placeholder="Add notes about this training run..."
+                  />
+                </div>
+
+                <div className="bg-blue-50 p-4 rounded-lg">
+                  <h4 className="font-semibold text-sm mb-2">Training Summary</h4>
+                  <div className="text-xs space-y-1">
+                    <p><strong>Stock:</strong> {config.ticker}</p>
+                    <p><strong>Period:</strong> {config.start_date} to {config.end_date}</p>
+                    <p><strong>Model:</strong> {config.model_spec.model_type}</p>
+                    {config.model_spec.model_type === 'random_forest' && (
+                      <p><strong>Trees:</strong> {config.model_spec.n_estimators}</p>
+                    )}
+                    {(config.model_spec.model_type === 'decision_tree' || config.model_spec.model_type === 'random_forest') && (
+                      <>
+                        <p><strong>Max Depth:</strong> {config.model_spec.max_depth}</p>
+                        <p><strong>Min Split:</strong> {config.model_spec.min_samples_split}</p>
+                        <p><strong>Min Leaf:</strong> {config.model_spec.min_samples_leaf}</p>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div className="mt-6 flex justify-between">
+              <button
+                onClick={handleBack}
+                className="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+              >
+                Back
+              </button>
+              <button
+                onClick={handleNext}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                Next
+              </button>
+            </div>
           </div>
         </div>
       )}

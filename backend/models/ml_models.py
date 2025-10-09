@@ -9,6 +9,7 @@ class ModelType(str, Enum):
     DECISION_TREE = "decision_tree"
     RANDOM_FOREST = "random_forest"
     LINEAR_REGRESSION = "linear_regression"
+    LSTM = "lstm"  # Add this new type
 
 class ModelConfig(BaseModel):
     """Shared model configuration for training and backtesting"""
@@ -16,10 +17,20 @@ class ModelConfig(BaseModel):
     max_depth: Optional[int] = Field(default=5, ge=1, le=50)
     min_samples_split: Optional[int] = Field(default=2, ge=2, le=50)
     min_samples_leaf: Optional[int] = Field(default=1, ge=1, le=20)
-    # Random Forest specific
     n_estimators: Optional[int] = Field(default=100, ge=10, le=500)
-    # General parameters
     random_state: int = Field(default=42)
+    
+    # LSTM-specific parameters
+    sequence_length: Optional[int] = Field(default=20, ge=10, le=100)
+    hidden_size: Optional[int] = Field(default=64, ge=16, le=256)
+    num_layers: Optional[int] = Field(default=2, ge=1, le=5)
+    dropout: Optional[float] = Field(default=0.2, ge=0.0, le=0.5)
+    learning_rate: Optional[float] = Field(default=0.001, ge=0.0001, le=0.01)
+    epochs: Optional[int] = Field(default=100, ge=10, le=500)
+    batch_size: Optional[int] = Field(default=32, ge=8, le=128)
+    validation_sequences: Optional[int] = Field(default=30, ge=10, le=100)
+    early_stopping_patience: Optional[int] = Field(default=10, ge=3, le=30)
+    use_validation: Optional[bool] = Field(default=True)
     
     class Config:
         use_enum_values = True
