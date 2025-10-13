@@ -21,6 +21,8 @@ from models.ml_models import (
     ModelConfig, ModelType, TrainingMetrics, TrainingResult, 
     ResultsManager, generate_run_id
 )
+from models.lstm_model import LSTMStockPredictor
+
 
 router = APIRouter()
 
@@ -118,6 +120,55 @@ def create_model(config: ModelConfig):
         return LinearRegression()
     else:
         raise ValueError(f"Unsupported model type: {config.model_type}")
+    
+def train_lstm_for_date(df: pd.DataFrame, end_idx: int, config: BacktestConfig):
+    """Train an LSTM model using data up to end_idx"""
+    start_idx = max(0, end_idx - config.training_history_days)
+    df_train = df.iloc[start_idx:end_idx].copy()
+    
+    sequence_length = config.model_spec.sequence_length
+    min_required = sequence_length + 50
+    
+    if len(df_train) < min_required:
+        return None, 0
+    
+    predictor = LSTMStockPredictor(
+        sequence_length=config.model_spec.sequence_length,
+        hidden_size=config.model_spec.hidden_size,
+        num_layers=config.model_spec.num_layers,
+        dropout=config.model_spec.dropout,
+        learning_rate=config.model_spec.learning_rate,
+        model_dir='lstm_models_backtest'
+    )
+    
+    backtest_epochs = max(20, config.model_spec.epochs // 3)
+    
+    try:
+        history = predictor.train(
+            df_train,
+            epochs=backtest_epochs,
+            batch_size=config.model_spec.batch_size,
+            validation_sequences=config.model_spec.validation_sequences,
+            early_stopping_patience=config.model_spec.early_stopping_patience,
+            use_validation=config.model_spec.use_validation
+        )
+        return predictor, len(df_train)
+    except Exception as e:
+        print(f"LSTM training failed: {str(e)}")
+        return None, 0
+
+def make_lstm_prediction(predictor: LSTMStockPredictor, df: pd.DataFrame, predict_idx: int):
+    """Make an LSTM prediction for a specific date"""
+    try:
+        df_pred = df.iloc[:predict_idx].copy()
+        predictions = predictor.predict(df_pred, last_sequence_only=True)
+        
+        if predictions is not None and len(predictions) > 0:
+            return predictions[0][0]
+        return None
+    except Exception as e:
+        print(f"LSTM prediction failed: {str(e)}")
+        return None
 
 def train_model_for_date(df: pd.DataFrame, end_idx: int, config: BacktestConfig):
     """Train a model using data up to end_idx"""
@@ -159,33 +210,31 @@ async def backtest_model(config: BacktestConfig):
     try:
         stock = yf.Ticker(config.ticker)
         
-        # Determine backtest period
-        if config.backtest_mode == "standard":
-            if not config.backtest_days or config.backtest_days < 1:
-                raise HTTPException(status_code=400, detail="Backtest days must be at least 1")
-            
-            end_date = datetime.now()
-            total_days_needed = config.backtest_days + config.training_history_days + 60
-            start_date = end_date - timedelta(days=total_days_needed)
-            
-        elif config.backtest_mode == "custom":
-            if not config.backtest_start_date or not config.backtest_end_date:
-                raise HTTPException(status_code=400, detail="Custom mode requires start and end dates")
-            
-            backtest_start = datetime.strptime(config.backtest_start_date, "%Y-%m-%d")
-            backtest_end = datetime.strptime(config.backtest_end_date, "%Y-%m-%d")
-            
-            if backtest_start >= backtest_end:
-                raise HTTPException(status_code=400, detail="Start date must be before end date")
-            
-            start_date = backtest_start - timedelta(days=config.training_history_days + 60)
-            end_date = backtest_end + timedelta(days=5)
+        # Download data
+        # Calculate start date accounting for non-trading days
+        # Rule of thumb: ~252 trading days per year, so multiply calendar days by ~1.4
+        trading_day_buffer = 1.4  # Buffer to account for weekends/holidays
+
+        if config.backtest_mode == "custom":
+            start_date = datetime.strptime(config.backtest_start_date, "%Y-%m-%d")
         else:
-            raise HTTPException(status_code=400, detail="Invalid backtest mode")
-        
-        # Fetch data
+            # Request more calendar days to ensure we get enough trading days
+            calendar_days_needed = int((config.backtest_days + config.training_history_days + 30) * trading_day_buffer)
+            start_date = datetime.now() - timedelta(days=calendar_days_needed)
+
+        end_date = datetime.now()
+
+        stock = yf.Ticker(config.ticker)
         df = stock.history(start=start_date, end=end_date)
-        
+
+        # Check if we have enough ACTUAL trading days (not calendar days)
+        min_trading_days = config.training_history_days + 30
+        if df.empty or len(df) < min_trading_days:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Insufficient historical data. Got {len(df)} trading days, need at least {min_trading_days}"
+            )
+                
         if df.empty:
             raise HTTPException(status_code=404, detail=f"No data found for ticker {config.ticker}")
         
@@ -206,38 +255,75 @@ async def backtest_model(config: BacktestConfig):
         
         # Perform backtesting
         predictions = []
-        model = None
-        scaler = None
-        feature_cols = None
+        is_lstm = config.model_spec.model_type == ModelType.LSTM
         
-        for idx in backtest_indices:
-            if idx < 30:
-                continue
+        if is_lstm:
+            # LSTM backtesting
+            lstm_predictor = None
             
-            if config.retrain_for_each_prediction or model is None:
-                model, scaler, feature_cols, training_samples = train_model_for_date(df, idx, config)
-                if model is None:
+            for idx in backtest_indices:
+                if idx < config.model_spec.sequence_length + 30:
                     continue
-            else:
-                training_samples = 0
+                
+                if config.retrain_for_each_prediction or lstm_predictor is None:
+                    lstm_predictor, training_samples = train_lstm_for_date(df, idx, config)
+                    if lstm_predictor is None:
+                        continue
+                else:
+                    training_samples = 0
+                
+                predicted_close = make_lstm_prediction(lstm_predictor, df, idx)
+                
+                if predicted_close is None:
+                    continue
+                
+                actual_close = df['Close'].iloc[idx]
+                error = predicted_close - actual_close
+                error_pct = (error / actual_close) * 100
+                
+                predictions.append(BacktestResult(
+                    date=df.index[idx].strftime("%Y-%m-%d"),
+                    actual_close=round(float(actual_close), 2),
+                    predicted_close=round(float(predicted_close), 2),
+                    error=round(float(error), 2),
+                    error_pct=round(float(error_pct), 2),
+                    training_samples=training_samples
+                ))
+        else:
+            # Perform backtesting
+            predictions = []
+            model = None
+            scaler = None
+            feature_cols = None
             
-            predicted_close = make_prediction(model, scaler, feature_cols, df, idx)
-            
-            if predicted_close is None:
-                continue
-            
-            actual_close = df['Close'].iloc[idx]
-            error = predicted_close - actual_close
-            error_pct = (error / actual_close) * 100
-            
-            predictions.append(BacktestResult(
-                date=df.index[idx].strftime("%Y-%m-%d"),
-                actual_close=round(float(actual_close), 2),
-                predicted_close=round(float(predicted_close), 2),
-                error=round(float(error), 2),
-                error_pct=round(float(error_pct), 2),
-                training_samples=training_samples
-            ))
+            for idx in backtest_indices:
+                if idx < 30:
+                    continue
+                
+                if config.retrain_for_each_prediction or model is None:
+                    model, scaler, feature_cols, training_samples = train_model_for_date(df, idx, config)
+                    if model is None:
+                        continue
+                else:
+                    training_samples = 0
+                
+                predicted_close = make_prediction(model, scaler, feature_cols, df, idx)
+                
+                if predicted_close is None:
+                    continue
+                
+                actual_close = df['Close'].iloc[idx]
+                error = predicted_close - actual_close
+                error_pct = (error / actual_close) * 100
+                
+                predictions.append(BacktestResult(
+                    date=df.index[idx].strftime("%Y-%m-%d"),
+                    actual_close=round(float(actual_close), 2),
+                    predicted_close=round(float(predicted_close), 2),
+                    error=round(float(error), 2),
+                    error_pct=round(float(error_pct), 2),
+                    training_samples=training_samples
+                ))
         
         if len(predictions) == 0:
             raise HTTPException(status_code=400, detail="No valid predictions could be made")

@@ -8,6 +8,17 @@ interface ModelConfig {
   min_samples_leaf: number;
   n_estimators: number;
   random_state: number;
+  // LSTM parameters
+  sequence_length?: number;
+  hidden_size?: number;
+  num_layers?: number;
+  dropout?: number;
+  learning_rate?: number;
+  epochs?: number;
+  batch_size?: number;
+  validation_sequences?: number;
+  early_stopping_patience?: number;
+  use_validation?: boolean;
 }
 
 interface BacktestConfig {
@@ -63,22 +74,33 @@ export default function ModelBacktesting() {
   const [backtestResult, setBacktestResult] = useState<BacktestResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const [config, setConfig] = useState<BacktestConfig>({
-    ticker: "",
-    backtest_mode: "standard",
-    backtest_days: 30,
-    training_history_days: 90,
-    model_spec: {  // ← Nested structure
-      model_type: "decision_tree",
-      max_depth: 5,
-      min_samples_split: 2,
-      min_samples_leaf: 1,
-      n_estimators: 100,
-      random_state: 42,
-    },
-    retrain_for_each_prediction: false,
-    notes: "",
-  });
+ const [config, setConfig] = useState<BacktestConfig>({
+  ticker: "",
+  backtest_mode: "standard",
+  backtest_days: 30,
+  training_history_days: 90,
+  model_spec: {
+    model_type: "decision_tree",
+    max_depth: 5,
+    min_samples_split: 2,
+    min_samples_leaf: 1,
+    n_estimators: 100,
+    random_state: 42,
+    // LSTM defaults
+    sequence_length: 20,
+    hidden_size: 64,
+    num_layers: 2,
+    dropout: 0.2,
+    learning_rate: 0.001,
+    epochs: 100,
+    batch_size: 32,
+    validation_sequences: 30,
+    early_stopping_patience: 10,
+    use_validation: true,
+  },
+  retrain_for_each_prediction: false,
+  notes: "",
+});
 
   useEffect(() => {
     fetch("http://127.0.0.1:8000/api/available-tickers")
@@ -162,7 +184,7 @@ export default function ModelBacktesting() {
     : [];
 
   // Helper function to update model config
-  const handleModelConfigChange = (field: keyof ModelConfig, value: number | string) => {
+  const handleModelConfigChange = (field: keyof ModelConfig, value: number | string | boolean) => {
     setConfig({
       ...config,
       model_spec: { ...config.model_spec, [field]: value }
@@ -427,8 +449,82 @@ export default function ModelBacktesting() {
                 <option value="decision_tree">Decision Tree Regressor</option>
                 <option value="random_forest">Random Forest Regressor</option>
                 <option value="linear_regression">Linear Regression</option>
+                <option value="lstm">LSTM Neural Network</option>
               </select>
             </div>
+
+            {config.model_spec.model_type === 'lstm' && (
+              <div className="space-y-4 bg-blue-50 p-4 rounded-lg">
+                <h3 className="font-semibold">LSTM Parameters</h3>
+                
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Sequence Length: {config.model_spec.sequence_length}
+                  </label>
+                  <input
+                    type="range"
+                    min="10"
+                    max="100"
+                    value={config.model_spec.sequence_length}
+                    onChange={(e) => handleModelConfigChange('sequence_length', parseInt(e.target.value))}
+                    className="w-full"
+                    title="Set sequence length"
+                  />
+                  <p className="text-xs text-gray-500">Past days to analyze</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Hidden Size: {config.model_spec.hidden_size}
+                  </label>
+                  <input
+                    type="range"
+                    min="16"
+                    max="256"
+                    step="16"
+                    value={config.model_spec.hidden_size}
+                    onChange={(e) => handleModelConfigChange('hidden_size', parseInt(e.target.value))}
+                    className="w-full"
+                    title="Set hidden size"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Layers: {config.model_spec.num_layers}
+                  </label>
+                  <input
+                    type="range"
+                    min="1"
+                    max="5"
+                    value={config.model_spec.num_layers}
+                    onChange={(e) => handleModelConfigChange('num_layers', parseInt(e.target.value))}
+                    className="w-full"
+                    title="Set number of layers"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Epochs: {config.model_spec.epochs}
+                  </label>
+                  <input
+                    type="range"
+                    min="20"
+                    max="300"
+                    step="10"
+                    value={config.model_spec.epochs}
+                    onChange={(e) => handleModelConfigChange('epochs', parseInt(e.target.value))}
+                    className="w-full"
+                    title="Set epochs"
+                  />
+                </div>
+
+                <p className="text-xs text-yellow-700 bg-yellow-50 p-2 rounded">
+                  Note: LSTM training is slower. Epochs are automatically reduced to 1/3 for backtesting.
+                </p>
+              </div>
+            )}
 
             {config.model_spec.model_type === 'random_forest' && (
               <div>
