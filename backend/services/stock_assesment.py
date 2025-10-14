@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException
-import yfinance as yf
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from data.tickers import STOCK_TICKERS
+from services.data_provider import get_data_provider
 
 router = APIRouter()
 
@@ -64,10 +64,10 @@ def calculate_metric_score(value: float, metric_config: Dict[str, Any]) -> float
             return max(50, 100 - (excess * 25))
 
 def get_stock_fundamentals(ticker: str) -> Optional[Dict[str, Any]]:
-    """Get comprehensive stock fundamentals from yfinance"""
+    """Get comprehensive stock fundamentals"""
     try:
-        stock = yf.Ticker(ticker)
-        info = stock.info
+        data_provider = get_data_provider()
+        info = data_provider.get_stock_info(ticker)
         
         # Extract key metrics (handle missing data gracefully)
         fundamentals = {
@@ -171,12 +171,12 @@ def calculate_stock_score(fundamentals: Dict[str, Any]) -> Dict[str, Any]:
 def get_price_history(ticker: str, days: int = 30) -> List[Dict[str, Any]]:
     """Get price history for charting"""
     try:
-        stock = yf.Ticker(ticker)
         end_date = datetime.now()
         start_date = end_date - timedelta(days=60)
-        
-        hist = stock.history(start=start_date, end=end_date)
-        
+
+        data_provider = get_data_provider()
+        hist = data_provider.get_stock_history(ticker, start=start_date, end=end_date)
+
         if hist.empty:
             return []
             

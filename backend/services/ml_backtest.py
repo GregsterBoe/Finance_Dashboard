@@ -7,7 +7,6 @@ Updated ML backtesting service using shared model configuration and results trac
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import datetime, timedelta
-import yfinance as yf
 import numpy as np
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor
@@ -22,6 +21,7 @@ from models.ml_models import (
     ResultsManager, generate_run_id
 )
 from models.lstm_model import LSTMStockPredictor
+from services.data_provider import get_data_provider
 
 
 router = APIRouter()
@@ -207,9 +207,7 @@ def make_prediction(model, scaler, feature_cols, df: pd.DataFrame, predict_idx: 
 @router.post("/backtest-model", response_model=BacktestResponse)
 async def backtest_model(config: BacktestConfig):
     """Backtest a machine learning model for stock price prediction"""
-    try:
-        stock = yf.Ticker(config.ticker)
-        
+    try:        
         # Download data
         # Calculate start date accounting for non-trading days
         # Rule of thumb: ~252 trading days per year, so multiply calendar days by ~1.4
@@ -224,8 +222,13 @@ async def backtest_model(config: BacktestConfig):
 
         end_date = datetime.now()
 
-        stock = yf.Ticker(config.ticker)
-        df = stock.history(start=start_date, end=end_date)
+        # Fetch stock data using data provider
+        data_provider = get_data_provider()
+        df = data_provider.get_stock_history(
+            config.ticker,
+            start=start_date,
+            end=end_date
+        )
 
         # Check if we have enough ACTUAL trading days (not calendar days)
         min_trading_days = config.training_history_days + 30

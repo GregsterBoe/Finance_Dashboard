@@ -2,7 +2,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 import sklearn
-import yfinance as yf
 import numpy as np
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor
@@ -18,6 +17,7 @@ from models.ml_models import (
 )
 
 from models.lstm_model import LSTMStockPredictor
+from services.data_provider import get_data_provider
 import torch
 
 router = APIRouter()
@@ -260,9 +260,12 @@ async def train_model(config: TrainingConfig):
         if (end_date - start_date).days < 30:
             raise HTTPException(status_code=400, detail="Training period must be at least 30 days")
         
-        # Fetch stock data
-        stock = yf.Ticker(config.ticker)
-        df = stock.history(start=start_date, end=end_date + timedelta(days=5))
+        data_provider = get_data_provider()
+        df = data_provider.get_stock_history(
+            config.ticker,
+            start=start_date,
+            end=end_date + timedelta(days=5)
+        )
         
         if df.empty:
             raise HTTPException(status_code=404, detail=f"No data found for ticker {config.ticker}")

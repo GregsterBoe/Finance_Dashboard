@@ -1,8 +1,9 @@
 from fastapi import APIRouter, HTTPException
-import yfinance as yf
 from datetime import datetime, timedelta
 import pandas as pd
 from typing import Dict, Any
+
+from services.data_provider import get_data_provider
 
 router = APIRouter()
 
@@ -104,15 +105,9 @@ def market_overview():
 
         for name, ticker in MAJOR_MARKETS.items():
             try:
-                # Create yfinance ticker object
-                stock = yf.Ticker(ticker)
-                
-                # Fetch historical data
-                hist = stock.history(
-                    start=start_date.strftime("%Y-%m-%d"),
-                    end=end_date.strftime("%Y-%m-%d"),
-                    interval="1d"
-                )
+                data_provider = get_data_provider()
+                hist = data_provider.get_stock_history(ticker, period="5d")
+                info = data_provider.get_stock_info(ticker)
 
                 if hist.empty or len(hist) < 2:  # Need at least 2 data points for change calculation
                     print(f"Insufficient data for {name} ({ticker})")

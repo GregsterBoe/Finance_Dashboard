@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException, Path, Query
-import yfinance as yf
 import requests
 from datetime import datetime, timedelta
 import pandas as pd
@@ -7,6 +6,8 @@ from typing import Dict, Any, List, Optional
 import time
 from bs4 import BeautifulSoup
 import re
+
+from services.data_provider import get_data_provider
 
 router = APIRouter()
 
@@ -69,12 +70,16 @@ class WhaleTracker:
     def analyze_unusual_volume(self, symbol: str, days: int = 30) -> Dict:
         """Analyze unusual volume patterns that might indicate whale activity"""
         try:
-            stock = yf.Ticker(symbol)
             end_date = datetime.now()
             start_date = end_date - timedelta(days=days)
             
-            hist = stock.history(start=start_date, end=end_date, interval="1d")
-            
+            data_provider = get_data_provider()
+            hist = data_provider.get_stock_history(
+                symbol.upper(),
+                start=start_date,
+                end=end_date
+            )
+
             if hist.empty:
                 return {"error": "No data available"}
             
@@ -116,8 +121,8 @@ class WhaleTracker:
         """Get recent insider trading data (using free sources)"""
         try:
             # Get company info
-            stock = yf.Ticker(symbol)
-            info = stock.info
+            data_provider = get_data_provider()
+            info = data_provider.get_stock_info(symbol.upper())
             
             # This is a simplified version - in practice you'd want to scrape
             # from sources like OpenInsider or SEC EDGAR directly
@@ -138,12 +143,15 @@ class WhaleTracker:
     def detect_dark_pool_activity(self, symbol: str) -> Dict:
         """Detect potential dark pool activity through price/volume analysis"""
         try:
-            stock = yf.Ticker(symbol)
             end_date = datetime.now()
             start_date = end_date - timedelta(days=30)
-            
-            # Get intraday data if available
-            hist = stock.history(start=start_date, end=end_date, interval="1d")
+
+            data_provider = get_data_provider()
+            hist = data_provider.get_stock_history(
+                symbol.upper(),
+                start=start_date,
+                end=end_date
+            )
             
             if hist.empty:
                 return {"error": "No data available"}
@@ -210,8 +218,8 @@ def get_whale_activity(
         dark_pool_analysis = whale_tracker.detect_dark_pool_activity(symbol.upper())
         
         # Get basic stock info
-        stock = yf.Ticker(symbol.upper())
-        info = stock.info
+        data_provider = get_data_provider()
+        info = data_provider.get_stock_info(symbol.upper())
         
         return {
             "symbol": symbol.upper(),
@@ -314,10 +322,13 @@ def get_whale_watchlist():
         
         for symbol in watchlist_symbols[:10]:  # Limit to first 10 for performance
             try:
-                stock = yf.Ticker(symbol)
-                hist = stock.history(period="5d")
-                info = stock.info
-                
+                data_provider = get_data_provider()
+                hist = data_provider.get_stock_history(
+                    symbol.upper(),
+                    period="5d"
+                )
+                info = data_provider.get_stock_info(symbol.upper())
+
                 if not hist.empty:
                     current_volume = hist['Volume'].iloc[-1]
                     avg_volume = info.get('averageVolume', 0)
