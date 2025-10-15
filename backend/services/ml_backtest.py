@@ -15,6 +15,9 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from typing import Dict, Any, List, Optional
 import pandas as pd
+from fastapi.responses import StreamingResponse
+import json
+import asyncio
 
 from models.ml_models import (
     ModelConfig, ModelType, TrainingMetrics, TrainingResult, 
@@ -55,6 +58,15 @@ class BacktestResponse(BaseModel):
     summary_metrics: TrainingMetrics
     model_spec: ModelConfig
     timestamp: str
+
+def yield_progress(message: str, progress: float, data: dict = None):
+    """Helper to format SSE messages"""
+    event_data = {
+        "message": message,
+        "progress": progress,  # 0-100
+        **(data or {})
+    }
+    return f"data: {json.dumps(event_data)}\n\n"
 
 def create_model(config: ModelConfig):
     """Create a model instance based on configuration"""
@@ -164,206 +176,205 @@ def make_prediction(model, scaler, feature_cols, df: pd.DataFrame, predict_idx: 
     
     return prediction
 
-@router.post("/backtest-model", response_model=BacktestResponse)
-async def backtest_model(config: BacktestConfig):
-    """Backtest a machine learning model for stock price prediction"""
-    try:        
-        # Download data
-        # Calculate start date accounting for non-trading days
-        # Rule of thumb: ~252 trading days per year, so multiply calendar days by ~1.4
-        trading_day_buffer = 1.4  # Buffer to account for weekends/holidays
-
-        if config.backtest_mode == "custom":
-            start_date = datetime.strptime(config.backtest_start_date, "%Y-%m-%d")
-        else:
-            # Request more calendar days to ensure we get enough trading days
-            calendar_days_needed = int((config.backtest_days + config.training_history_days + 30) * trading_day_buffer)
-            start_date = datetime.now() - timedelta(days=calendar_days_needed)
-
-        end_date = datetime.now()
-
-        # Fetch stock data using data provider
-        data_provider = get_data_provider()
-        df = data_provider.get_stock_history(
-            config.ticker,
-            start=start_date,
-            end=end_date
-        )
-
-        # Check if we have enough ACTUAL trading days (not calendar days)
-        min_trading_days = config.training_history_days + 30
-        if df.empty or len(df) < min_trading_days:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Insufficient historical data. Got {len(df)} trading days, need at least {min_trading_days}"
-            )
-                
-        if df.empty:
-            raise HTTPException(status_code=404, detail=f"No data found for ticker {config.ticker}")
-        
-        # Determine backtest indices
-        if config.backtest_mode == "standard":
-            backtest_indices = list(range(len(df) - config.backtest_days, len(df)))
-        else:
-            backtest_start = datetime.strptime(config.backtest_start_date, "%Y-%m-%d")
-            backtest_end = datetime.strptime(config.backtest_end_date, "%Y-%m-%d")
-            backtest_indices = []
+@router.post("/backtest-model-stream")
+async def backtest_model_stream(config: BacktestConfig):
+    """Backtest with progress streaming via SSE"""
+    
+    async def event_generator():
+        try:
+            yield yield_progress("Starting backtesting...", 0)
             
-            for idx, date in enumerate(df.index):
-                if backtest_start <= date.to_pydatetime() <= backtest_end:
-                    backtest_indices.append(idx)
-        
-        if len(backtest_indices) < 1:
-            raise HTTPException(status_code=400, detail="Insufficient data for backtesting period")
-        
-        # Perform backtesting
-        predictions = []
-        is_lstm = config.model_spec.model_type == ModelType.LSTM
-        
-        if is_lstm:
-            # LSTM backtesting
-            lstm_predictor = None
+            # Download data
+            await asyncio.sleep(0.1)  # Allow event to be sent
+            yield yield_progress("Downloading stock data...", 5)
             
-            for idx in backtest_indices:
-                if idx < config.model_spec.sequence_length + 30:
-                    continue
-                
-                if config.retrain_for_each_prediction or lstm_predictor is None:
-                    lstm_predictor, training_samples = train_lstm_for_date(df, idx, config)
-                    if lstm_predictor is None:
-                        continue
-                else:
-                    training_samples = 0
-                
-                predicted_close = make_lstm_prediction(lstm_predictor, df, idx)
-                
-                if predicted_close is None:
-                    continue
-                
-                actual_close = df['Close'].iloc[idx]
-                error = predicted_close - actual_close
-                error_pct = (error / actual_close) * 100
-                
-                predictions.append(BacktestResult(
-                    date=df.index[idx].strftime("%Y-%m-%d"),
-                    actual_close=round(float(actual_close), 2),
-                    predicted_close=round(float(predicted_close), 2),
-                    error=round(float(error), 2),
-                    error_pct=round(float(error_pct), 2),
-                    training_samples=training_samples
-                ))
-        else:
+            trading_day_buffer = 1.4
+            if config.backtest_mode == "custom":
+                start_date = datetime.strptime(config.backtest_start_date, "%Y-%m-%d")
+            else:
+                calendar_days_needed = int((config.backtest_days + config.training_history_days + 30) * trading_day_buffer)
+                start_date = datetime.now() - timedelta(days=calendar_days_needed)
+            
+            end_date = datetime.now()
+            data_provider = get_data_provider()
+            df = data_provider.get_stock_history(config.ticker, start=start_date, end=end_date)
+            
+            min_trading_days = config.training_history_days + 30
+            if df.empty or len(df) < min_trading_days:
+                yield yield_progress("Error: Insufficient data", 100, {"error": True})
+                return
+            
+            yield yield_progress("Data loaded successfully", 10)
+            
+            # Determine backtest indices
+            if config.backtest_mode == "standard":
+                backtest_indices = list(range(len(df) - config.backtest_days, len(df)))
+            else:
+                backtest_start = datetime.strptime(config.backtest_start_date, "%Y-%m-%d")
+                backtest_end = datetime.strptime(config.backtest_end_date, "%Y-%m-%d")
+                backtest_indices = [idx for idx, date in enumerate(df.index) 
+                                   if backtest_start <= date.to_pydatetime() <= backtest_end]
+            
+            if len(backtest_indices) < 1:
+                yield yield_progress("Error: Insufficient backtest period", 100, {"error": True})
+                return
+            
+            total_predictions = len(backtest_indices)
+            yield yield_progress(f"Starting predictions for {total_predictions} days", 15)
+            
             # Perform backtesting
             predictions = []
-            model = None
-            scaler = None
-            feature_cols = None
+            is_lstm = config.model_spec.model_type == ModelType.LSTM
             
-            for idx in backtest_indices:
-                if idx < 30:
-                    continue
-                
-                if config.retrain_for_each_prediction or model is None:
-                    model, scaler, feature_cols, training_samples = train_model_for_date(df, idx, config)
+            if is_lstm:
+                lstm_predictor = None
+                for i, idx in enumerate(backtest_indices):
+                    if idx < config.model_spec.sequence_length + 30:
+                        continue
+                    
+                    # Progress: 15% to 85% for predictions
+                    progress = 15 + (70 * (i + 1) / total_predictions)
+                    
+                    if config.retrain_for_each_prediction or lstm_predictor is None:
+                        yield yield_progress(
+                            f"Training LSTM model for day {i+1}/{total_predictions}...", 
+                            progress
+                        )
+                        lstm_predictor, training_samples = train_lstm_for_date(df, idx, config)
+                        if lstm_predictor is None:
+                            continue
+                    else:
+                        training_samples = 0
+                    
+                    # Make prediction
+                    predicted_close = make_lstm_prediction(lstm_predictor, df, idx)
+                    actual_close = df['Close'].iloc[idx]
+                    error = predicted_close - actual_close
+                    error_pct = (error / actual_close) * 100
+                    
+                    predictions.append(BacktestResult(
+                        date=df.index[idx].strftime("%Y-%m-%d"),
+                        actual_close=round(actual_close, 2),
+                        predicted_close=round(predicted_close, 2),
+                        error=round(error, 2),
+                        error_pct=round(error_pct, 2),
+                        training_samples=training_samples
+                    ))
+                    
+                    if (i + 1) % 5 == 0 or i == total_predictions - 1:
+                        yield yield_progress(
+                            f"Completed {i+1}/{total_predictions} predictions", 
+                            progress
+                        )
+            else:
+                # Traditional ML backtesting
+                predictions = []
+                model = None
+                scaler = None
+                feature_cols = None
+                for i, idx in enumerate(backtest_indices):
+                    progress = 15 + (70 * (i + 1) / total_predictions)
+                    
+                    if (i + 1) % 10 == 0 or i == 0 or i == total_predictions - 1:
+                        yield yield_progress(
+                            f"Processing day {i+1}/{total_predictions}...", 
+                            progress
+                        )
+                    if config.retrain_for_each_prediction or model is None:
+                        model, scaler, feature_cols, training_samples = train_model_for_date(df, idx, config)
                     if model is None:
                         continue
-                else:
-                    training_samples = 0
+                    else:
+                        training_samples = 0
+                    
+                    predicted_close = make_prediction(model, scaler, feature_cols, df, idx)
+
+                    if predicted_close is None:
+                        continue
                 
-                predicted_close = make_prediction(model, scaler, feature_cols, df, idx)
-                
-                if predicted_close is None:
-                    continue
-                
-                actual_close = df['Close'].iloc[idx]
-                error = predicted_close - actual_close
-                error_pct = (error / actual_close) * 100
-                
-                predictions.append(BacktestResult(
-                    date=df.index[idx].strftime("%Y-%m-%d"),
-                    actual_close=round(float(actual_close), 2),
-                    predicted_close=round(float(predicted_close), 2),
-                    error=round(float(error), 2),
-                    error_pct=round(float(error_pct), 2),
-                    training_samples=training_samples
-                ))
-        
-        if len(predictions) == 0:
-            raise HTTPException(status_code=400, detail="No valid predictions could be made")
-        
-        # Calculate summary metrics
-        errors = [p.error for p in predictions]
-        error_pcts = [p.error_pct for p in predictions]
-        actuals = [p.actual_close for p in predictions]
-        predicted = [p.predicted_close for p in predictions]
-        
-        mae = np.mean(np.abs(errors))
-        rmse = np.sqrt(np.mean(np.square(errors)))
-        mape = np.mean(np.abs(error_pcts))
-        r2 = r2_score(actuals, predicted)
-        
-        # Directional accuracy
-        if len(predictions) > 1:
-            correct_direction = 0
-            for i in range(1, len(predictions)):
-                actual_direction = predictions[i].actual_close > predictions[i-1].actual_close
-                pred_direction = predictions[i].predicted_close > predictions[i-1].predicted_close
-                if actual_direction == pred_direction:
-                    correct_direction += 1
-            directional_accuracy = (correct_direction / (len(predictions) - 1)) * 100
-        else:
-            directional_accuracy = 0.0
-        
-        summary_metrics = TrainingMetrics(
-            rmse=round(rmse, 4),
-            mae=round(mae, 4),
-            r2_score=round(r2, 4),
-            mape=round(mape, 4),
-            training_samples=len(predictions),
-            directional_accuracy=round(directional_accuracy, 2)
-        )
-        
-        backtest_period = {
-            "start": predictions[0].date,
-            "end": predictions[-1].date,
-            "total_days": len(predictions),
-            "training_history_days": config.training_history_days,
-            "retrain_for_each": config.retrain_for_each_prediction
+                    actual_close = df['Close'].iloc[idx]
+                    error = predicted_close - actual_close
+                    error_pct = (error / actual_close) * 100
+                    
+                    predictions.append(BacktestResult(
+                        date=df.index[idx].strftime("%Y-%m-%d"),
+                        actual_close=round(actual_close, 2),
+                        predicted_close=round(predicted_close, 2),
+                        error=round(error, 2),
+                        error_pct=round(error_pct, 2),
+                        training_samples=len(df[:idx])
+                    ))
+            
+            yield yield_progress("Calculating metrics...", 90)
+            
+            # Calculate summary metrics
+            actual_values = [p.actual_close for p in predictions]
+            predicted_values = [p.predicted_close for p in predictions]
+            
+            mae = mean_absolute_error(actual_values, predicted_values)
+            rmse = np.sqrt(mean_squared_error(actual_values, predicted_values))
+            r2 = r2_score(actual_values, predicted_values)
+            mape = np.mean(np.abs((np.array(actual_values) - np.array(predicted_values)) / np.array(actual_values))) * 100
+            
+            # Directional accuracy
+            if len(predictions) > 1:
+                correct_direction = 0
+                for i in range(1, len(predictions)):
+                    actual_direction = predictions[i].actual_close > predictions[i-1].actual_close
+                    pred_direction = predictions[i].predicted_close > predictions[i-1].predicted_close
+                    if actual_direction == pred_direction:
+                        correct_direction += 1
+                directional_accuracy = (correct_direction / (len(predictions) - 1)) * 100
+            else:
+                directional_accuracy = 0.0
+            
+            summary_metrics = TrainingMetrics(
+                rmse=round(rmse, 4),
+                mae=round(mae, 4),
+                mape=round(mape, 2),
+                r2_score=round(r2, 4),
+                directional_accuracy=round(directional_accuracy, 2),
+                training_samples=predictions[0].training_samples if predictions else 0
+            )
+            
+            # Generate results
+            run_id = generate_run_id(config.ticker, "backtest")            
+            response = BacktestResponse(
+                status="completed",
+                run_id=run_id,
+                ticker=config.ticker,
+                backtest_period={
+                    "start": df.index[backtest_indices[0]].strftime("%Y-%m-%d"),
+                    "end": df.index[backtest_indices[-1]].strftime("%Y-%m-%d"),
+                    "total_days": len(predictions),
+                    "training_history_days": config.training_history_days,
+                    "retrain_for_each": config.retrain_for_each_prediction
+                },
+                predictions=predictions,
+                summary_metrics=summary_metrics,
+                model_spec=config.model_spec,
+                timestamp=datetime.now().isoformat()
+            )
+            
+            # Send completion with results
+            yield yield_progress(
+                "Backtesting complete!", 
+                100, 
+                {"completed": True, "result": response.dict()}
+            )
+            
+        except Exception as e:
+            yield yield_progress(
+                f"Error: {str(e)}", 
+                100, 
+                {"error": True, "detail": str(e)}
+            )
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
         }
-        
-        # Generate run ID
-        run_id = generate_run_id(config.ticker, "backtest")
-        
-        # Save result to file
-        backtest_predictions_dict = [p.dict() for p in predictions]
-        
-        training_result = TrainingResult(
-            run_id=run_id,
-            run_type="backtest",
-            timestamp=datetime.now().isoformat(),
-            ticker=config.ticker,
-            model_spec=config.model_spec,
-            training_period=backtest_period,
-            metrics=summary_metrics,
-            backtest_predictions=backtest_predictions_dict,
-            notes=config.notes
-        )
-        
-        results_manager = ResultsManager()
-        results_manager.save_result(training_result)
-        
-        return BacktestResponse(
-            status="success",
-            run_id=run_id,
-            ticker=config.ticker,
-            backtest_period=backtest_period,
-            predictions=predictions,
-            summary_metrics=summary_metrics,
-            model_spec=config.model_spec,
-            timestamp=datetime.now().isoformat()
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Backtesting error: {str(e)}")
+    )

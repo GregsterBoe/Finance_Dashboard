@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import ProgressIndicator from "../components/ProgressIndicator";
 
 interface ModelConfig {
   model_type: string;
@@ -138,28 +139,17 @@ export default function ModelBacktesting() {
   const handleBacktest = async () => {
     setIsBacktesting(true);
     setError(null);
+    setBacktestResult(null);
+  };
 
-    try {
-      const response = await fetch("http://127.0.0.1:8000/api/backtest-model", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(config),
-      });
+  const handleBacktestComplete = (result: BacktestResponse) => {
+    setBacktestResult(result);
+    setIsBacktesting(false);
+  };
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Backtesting failed");
-      }
-
-      const data = await response.json();
-      setBacktestResult(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred during backtesting");
-    } finally {
-      setIsBacktesting(false);
-    }
+  const handleBacktestError = (errorMessage: string) => {
+    setError(errorMessage);
+    setIsBacktesting(false);
   };
 
   const resetBacktest = () => {
@@ -658,40 +648,42 @@ export default function ModelBacktesting() {
             </div>
           )}
 
-          {/* Error */}
+          {/* Progress Indicator */}
+          {isBacktesting && (
+            <ProgressIndicator
+              config={config}
+              onComplete={handleBacktestComplete}
+              onError={handleBacktestError}
+            />
+          )}
+
+          {/* Error Display */}
           {error && (
-            <div className="p-4 mb-4 bg-red-100 text-red-700 rounded-lg">
-              <p className="font-semibold mb-2">Error:</p>
-              <p>{error}</p>
-              <div className="flex space-x-2 mt-4">
-                <button
-                  onClick={handleBack}
-                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
-                >
-                  Go Back
-                </button>
-                <button
-                  onClick={resetBacktest}
-                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-                >
-                  Start Over
-                </button>
-              </div>
+            <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded">
+              <p className="text-red-800">Error: {error}</p>
+              <button
+                onClick={() => {
+                  setError(null);
+                  setIsBacktesting(false);
+                }}
+                className="mt-2 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+              >
+                Try Again
+              </button>
             </div>
           )}
 
-          {/* Results */}
+          {/* Results Display */}
           {backtestResult && (
-            <div className="space-y-8">
-              {/* Success Banner */}
-              <div className="bg-green-50 border border-green-200 p-4 rounded-lg">
-                <h3 className="text-green-800 font-semibold mb-2">✓ Backtest Complete</h3>
-                <p className="text-green-700 text-sm">
-                  Run ID: <span className="font-mono">{backtestResult.run_id}</span>
-                </p>
-                <p className="text-sm text-green-600 mt-1">
-                  Results saved to training_results.json
-                </p>
+            <div className="mt-6 space-y-6">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold">Backtest Results</h3>
+                <button
+                  onClick={resetBacktest}
+                  className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400"
+                >
+                  New Backtest
+                </button>
               </div>
 
               {/* Metrics Summary */}
