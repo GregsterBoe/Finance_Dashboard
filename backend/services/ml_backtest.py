@@ -22,6 +22,7 @@ from models.ml_models import (
 )
 from models.lstm_model import LSTMStockPredictor
 from services.data_provider import get_data_provider
+from services.feature_service import get_feature_service, FeatureSet
 
 
 router = APIRouter()
@@ -54,50 +55,6 @@ class BacktestResponse(BaseModel):
     summary_metrics: TrainingMetrics
     model_spec: ModelConfig
     timestamp: str
-
-def create_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Create technical indicators and features for training"""
-    df = df.copy()
-    
-    df['returns'] = df['Close'].pct_change()
-    df['log_returns'] = np.log(df['Close'] / df['Close'].shift(1))
-    
-    df['sma_5'] = df['Close'].rolling(window=5).mean()
-    df['sma_10'] = df['Close'].rolling(window=10).mean()
-    df['sma_20'] = df['Close'].rolling(window=20).mean()
-    
-    df['volatility_5'] = df['returns'].rolling(window=5).std()
-    df['volatility_10'] = df['returns'].rolling(window=10).std()
-    
-    df['momentum_5'] = df['Close'] - df['Close'].shift(5)
-    df['momentum_10'] = df['Close'] - df['Close'].shift(10)
-    
-    df['volume_sma_5'] = df['Volume'].rolling(window=5).mean()
-    df['volume_ratio'] = df['Volume'] / df['volume_sma_5']
-    
-    df['high_low_ratio'] = df['High'] / df['Low']
-    df['close_open_ratio'] = df['Close'] / df['Open']
-    
-    df['close_lag_1'] = df['Close'].shift(1)
-    df['close_lag_2'] = df['Close'].shift(2)
-    df['close_lag_3'] = df['Close'].shift(3)
-    
-    df['target'] = df['Close'].shift(-1)
-    
-    return df
-
-def prepare_training_data(df: pd.DataFrame):
-    """Prepare features and target for training"""
-    df_clean = df.dropna()
-    
-    feature_cols = [col for col in df_clean.columns 
-                   if col not in ['target', 'Open', 'High', 'Low', 'Close', 'Volume', 
-                                 'Dividends', 'Stock Splits']]
-    
-    X = df_clean[feature_cols]
-    y = df_clean['target']
-    
-    return X, y, feature_cols
 
 def create_model(config: ModelConfig):
     """Create a model instance based on configuration"""
@@ -175,8 +132,11 @@ def train_model_for_date(df: pd.DataFrame, end_idx: int, config: BacktestConfig)
     start_idx = max(0, end_idx - config.training_history_days)
     df_train = df.iloc[start_idx:end_idx].copy()
     
-    df_features = create_features(df_train)
-    X, y, feature_cols = prepare_training_data(df_features)
+    feature_service = get_feature_service()
+    X, y, feature_cols = feature_service.prepare_for_traditional_ml(
+        df_train,
+        feature_set=FeatureSet.STANDARD
+    )
     
     if len(X) < 20:
         return None, None, None, 0
@@ -191,14 +151,14 @@ def train_model_for_date(df: pd.DataFrame, end_idx: int, config: BacktestConfig)
 
 def make_prediction(model, scaler, feature_cols, df: pd.DataFrame, predict_idx: int):
     """Make a prediction for a specific date"""
+    feature_service = get_feature_service()
     df_pred = df.iloc[:predict_idx].copy()
-    df_features = create_features(df_pred)
-    df_clean = df_features.dropna()
     
-    if len(df_clean) == 0:
-        return None
+    X_pred, _, _ = feature_service.prepare_for_traditional_ml(
+        df_pred,
+        feature_set=FeatureSet.STANDARD
+    )
     
-    X_pred = df_clean[feature_cols].iloc[[-1]]
     X_pred_scaled = scaler.transform(X_pred)
     prediction = model.predict(X_pred_scaled)[0]
     

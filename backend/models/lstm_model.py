@@ -8,6 +8,9 @@ import os
 import json
 from datetime import datetime
 
+from services.feature_service import get_feature_service, FeatureSet
+
+
 class LSTMModel(nn.Module):
     """
     LSTM model for stock price prediction
@@ -100,54 +103,6 @@ class LSTMStockPredictor:
         # Store validation data for metrics calculation
         self.X_val = None
         self.y_val = None
-        
-    def create_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Create technical indicators and features
-        Same as your current implementation but organized for LSTM
-        """
-        df = df.copy()
-        
-        # Price-based features
-        df['returns'] = df['Close'].pct_change()
-        df['log_returns'] = np.log(df['Close'] / df['Close'].shift(1))
-        
-        # Moving averages
-        df['sma_5'] = df['Close'].rolling(window=5).mean()
-        df['sma_10'] = df['Close'].rolling(window=10).mean()
-        df['sma_20'] = df['Close'].rolling(window=20).mean()
-        
-        # Exponential moving averages
-        df['ema_5'] = df['Close'].ewm(span=5, adjust=False).mean()
-        df['ema_10'] = df['Close'].ewm(span=10, adjust=False).mean()
-        
-        # Volatility
-        df['volatility_5'] = df['returns'].rolling(window=5).std()
-        df['volatility_10'] = df['returns'].rolling(window=10).std()
-        
-        # Price momentum
-        df['momentum_5'] = df['Close'] - df['Close'].shift(5)
-        df['momentum_10'] = df['Close'] - df['Close'].shift(10)
-        
-        # Volume features
-        df['volume_sma_5'] = df['Volume'].rolling(window=5).mean()
-        df['volume_ratio'] = df['Volume'] / (df['volume_sma_5'] + 1e-8)
-        
-        # Price ratios
-        df['high_low_ratio'] = df['High'] / (df['Low'] + 1e-8)
-        df['close_open_ratio'] = df['Close'] / (df['Open'] + 1e-8)
-        
-        # RSI (Relative Strength Index)
-        delta = df['Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / (loss + 1e-8)
-        df['rsi'] = 100 - (100 / (1 + rs))
-        
-        # Target: next day's close price (for prediction)
-        df['target'] = df['Close'].shift(-1)
-        
-        return df
     
     def prepare_sequences(self, df: pd.DataFrame, feature_cols: List[str]) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -194,12 +149,14 @@ class LSTMStockPredictor:
             Training history dictionary
         """
         # Create features
-        df_features = self.create_features(df)
+        feature_service = get_feature_service()
+        df_features, feature_cols = feature_service.prepare_for_lstm(
+            df,
+            feature_set=FeatureSet.ADVANCED  # LSTM uses advanced features
+        )
         
-        # Define feature columns (exclude OHLCV and target)
-        self.feature_columns = [col for col in df_features.columns 
-                               if col not in ['Open', 'High', 'Low', 'Close', 'Volume', 
-                                            'target', 'Dividends', 'Stock Splits']]
+        # Store feature columns
+        self.feature_columns = feature_cols
         
         # Prepare sequences (with scaling applied internally)
         X, y = self.prepare_sequences(df_features, self.feature_columns)
@@ -390,7 +347,12 @@ class LSTMStockPredictor:
             raise ValueError("Model not trained. Call train() first.")
         
         # Create features
-        df_features = self.create_features(df)
+        feature_service = get_feature_service()
+        df_features, _ = feature_service.prepare_for_lstm(
+            df,
+            feature_set=FeatureSet.ADVANCED
+        )
+        
         df_clean = df_features[self.feature_columns].dropna()
         
         # Check if we have enough data
