@@ -1,6 +1,8 @@
 // frontend/src/pages/StockPricePredictor.tsx
 import { useState, useEffect } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import MetricsDisplay from '../components/MetricsDisplay';
+import type { TrainingMetrics } from '../types/metrics';
 
 interface ModelConfig {
   model_type: string;
@@ -35,13 +37,7 @@ interface TrainingResponse {
   status: string;
   run_id: string;
   ticker: string;
-  training_metrics: {
-    rmse: number;
-    mae: number;
-    r2_score: number;
-    mape: number;
-    training_samples: number;
-  };
+  training_metrics: TrainingMetrics;
   prediction: {
     date: string;
     predicted_close: number;
@@ -717,29 +713,11 @@ export default function StockPricePredictor() {
 
           {/* Training Metrics */}
           <div className="bg-white p-6 rounded-lg shadow-md">
-            <h3 className="text-xl font-semibold mb-4">Training Metrics</h3>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <div className="bg-blue-50 p-4 rounded-lg">
-                <div className="text-sm text-gray-600">RMSE</div>
-                <div className="text-lg font-semibold">{trainingResult.training_metrics.rmse.toFixed(4)}</div>
-              </div>
-              <div className="bg-blue-50 p-4 rounded-lg">
-                <div className="text-sm text-gray-600">MAE</div>
-                <div className="text-lg font-semibold">{trainingResult.training_metrics.mae.toFixed(4)}</div>
-              </div>
-              <div className="bg-blue-50 p-4 rounded-lg">
-                <div className="text-sm text-gray-600">R² Score</div>
-                <div className="text-lg font-semibold">{trainingResult.training_metrics.r2_score.toFixed(4)}</div>
-              </div>
-              <div className="bg-blue-50 p-4 rounded-lg">
-                <div className="text-sm text-gray-600">MAPE</div>
-                <div className="text-lg font-semibold">{trainingResult.training_metrics.mape.toFixed(2)}%</div>
-              </div>
-              <div className="bg-blue-50 p-4 rounded-lg">
-                <div className="text-sm text-gray-600">Samples</div>
-                <div className="text-lg font-semibold">{trainingResult.training_metrics.training_samples}</div>
-              </div>
-            </div>
+            <MetricsDisplay 
+              metrics={trainingResult.training_metrics}
+              title="Training Metrics"
+              includeDirectional={false}
+            />
           </div>
 
           {/* Feature Importance */}

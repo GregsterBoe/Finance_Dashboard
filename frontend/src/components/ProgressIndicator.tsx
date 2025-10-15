@@ -13,15 +13,8 @@ export default function ProgressIndicator({ onComplete, onError, config }: Progr
   const [isComplete, setIsComplete] = useState(false);
 
   useEffect(() => {
-    // Create EventSource for SSE
-    const eventSource = new EventSource(
-      `http://127.0.0.1:8000/api/backtest-model-stream?${new URLSearchParams({
-        ...config,
-        model_spec: JSON.stringify(config.model_spec)
-      })}`
-    );
 
-    // Alternative: Use POST with fetch API for EventSource
+    // Use POST with fetch API for EventSource
     const startSSE = async () => {
       try {
         const response = await fetch("http://127.0.0.1:8000/api/backtest-model-stream", {

@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import ProgressIndicator from "../components/ProgressIndicator";
+import MetricsDisplay from '../components/MetricsDisplay';
+import type { TrainingMetrics } from '../types/metrics';
 
 interface ModelConfig {
   model_type: string;
@@ -55,14 +57,7 @@ interface BacktestResponse {
     retrain_for_each: boolean;
   };
   predictions: BacktestResult[];
-  summary_metrics: {
-    mae: number;
-    rmse: number;
-    mape: number;
-    r2_score: number;
-    directional_accuracy: number;
-    training_samples: number;
-  };
+  summary_metrics: TrainingMetrics;
   model_spec: ModelConfig;
   timestamp: string;
 }
@@ -688,28 +683,12 @@ export default function ModelBacktesting() {
 
               {/* Metrics Summary */}
               <div>
-                <h3 className="text-lg font-semibold mb-4">Summary Metrics</h3>
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                  <div className="p-4 bg-purple-50 rounded-lg shadow-sm">
-                    <p className="text-sm text-gray-600">MAE</p>
-                    <p className="text-lg font-bold">{backtestResult.summary_metrics.mae.toFixed(4)}</p>
-                  </div>
-                  <div className="p-4 bg-purple-50 rounded-lg shadow-sm">
-                    <p className="text-sm text-gray-600">RMSE</p>
-                    <p className="text-lg font-bold">{backtestResult.summary_metrics.rmse.toFixed(4)}</p>
-                  </div>
-                  <div className="p-4 bg-purple-50 rounded-lg shadow-sm">
-                    <p className="text-sm text-gray-600">MAPE</p>
-                    <p className="text-lg font-bold">{backtestResult.summary_metrics.mape.toFixed(2)}%</p>
-                  </div>
-                  <div className="p-4 bg-purple-50 rounded-lg shadow-sm">
-                    <p className="text-sm text-gray-600">R² Score</p>
-                    <p className="text-lg font-bold">{backtestResult.summary_metrics.r2_score.toFixed(4)}</p>
-                  </div>
-                  <div className="p-4 bg-purple-50 rounded-lg shadow-sm">
-                    <p className="text-sm text-gray-600">Directional Accuracy</p>
-                    <p className="text-lg font-bold">{backtestResult.summary_metrics.directional_accuracy.toFixed(2)}%</p>
-                  </div>
+                <div className="bg-white p-6 rounded-lg shadow-md">
+                  <MetricsDisplay 
+                    metrics={backtestResult.summary_metrics}
+                    title="Summary Metrics"
+                    includeDirectional={true}
+                  />
                 </div>
               </div>
 

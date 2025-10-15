@@ -19,6 +19,7 @@ from models.ml_models import (
 from models.lstm_model import LSTMStockPredictor
 from services.data_provider import get_data_provider
 from services.feature_service import get_feature_service, FeatureSet
+from services.metrics_service import get_metrics_service
 import torch
 
 router = APIRouter()
@@ -72,23 +73,15 @@ def train_lstm_model(df: pd.DataFrame, config: TrainingConfig):
     next_day_prediction = next_day_pred[0][0]
     
     # Get metrics from training history
-    if config.model_spec.use_validation and history.get('val_loss'):
-        # Use the best validation loss (already MSE from training)
-        final_val_loss = min(history['val_loss'])  # Best validation loss
-        rmse = np.sqrt(final_val_loss)
-        mae = rmse * 0.8  # Rough approximation: MAE ≈ 0.8 * RMSE
-        
-        # Estimate R2 from loss (rough approximation)
-        # Good models typically have R2 > 0.7
-        # We can estimate based on RMSE relative to price
-        last_price = df['Close'].iloc[-1]
-        normalized_rmse = rmse / last_price
-        r2 = max(0, 1 - (normalized_rmse * 2))  # Rough estimate
-        
-        # MAPE approximation
-        mape = (rmse / last_price) * 100
+    if config.model_spec.use_validation:
+        # Use actual validation metrics (accurate, not approximated)
+        validation_metrics_dict = predictor.get_validation_metrics()
+        rmse = validation_metrics_dict['rmse']
+        mae = validation_metrics_dict['mae']
+        r2 = validation_metrics_dict['r2']
+        mape = validation_metrics_dict['mape']
     else:
-        # No validation
+        # No validation - use training loss as approximation
         final_train_loss = history['train_loss'][-1]
         rmse = np.sqrt(final_train_loss)
         mae = rmse * 0.8
@@ -304,14 +297,12 @@ async def train_model(config: TrainingConfig):
             # Make predictions on training set for metrics
             y_train_pred = model.predict(X_train_scaled)
             
-            # Calculate training metrics
-            mse = mean_squared_error(y_train, y_train_pred)
-            rmse = np.sqrt(mse)
-            mae = mean_absolute_error(y_train, y_train_pred)
-            r2 = r2_score(y_train, y_train_pred)
-            
-            # Calculate MAPE
-            mape = np.mean(np.abs((y_train - y_train_pred) / y_train)) * 100
+            metrics_service = get_metrics_service()
+            training_metrics = metrics_service.calculate_regression_metrics(
+                actual=y_train,
+                predicted=y_train_pred,
+                training_samples=len(X_train)
+            )
             
             # Make prediction for next day
             next_day_prediction = model.predict(X_predict_scaled)[0]
@@ -339,14 +330,6 @@ async def train_model(config: TrainingConfig):
             while prediction_date.weekday() >= 5:
                 prediction_date += timedelta(days=1)
             
-            # Create response objects
-            training_metrics = TrainingMetrics(
-                rmse=round(rmse, 4),
-                mae=round(mae, 4),
-                r2_score=round(r2, 4),
-                mape=round(mape, 4),
-                training_samples=len(X_train)
-            )
             
             prediction = PredictionResult(
                 date=prediction_date.strftime("%Y-%m-%d"),

@@ -26,6 +26,8 @@ from models.ml_models import (
 from models.lstm_model import LSTMStockPredictor
 from services.data_provider import get_data_provider
 from services.feature_service import get_feature_service, FeatureSet
+from services.metrics_service import get_metrics_service
+
 
 
 router = APIRouter()
@@ -172,7 +174,7 @@ def make_prediction(model, scaler, feature_cols, df: pd.DataFrame, predict_idx: 
     )
     
     X_pred_scaled = scaler.transform(X_pred)
-    prediction = model.predict(X_pred_scaled)[0]
+    prediction = model.predict(X_pred_scaled)[-1]
     
     return prediction
 
@@ -282,8 +284,8 @@ async def backtest_model_stream(config: BacktestConfig):
                         )
                     if config.retrain_for_each_prediction or model is None:
                         model, scaler, feature_cols, training_samples = train_model_for_date(df, idx, config)
-                    if model is None:
-                        continue
+                        if model is None:
+                            continue
                     else:
                         training_samples = 0
                     
@@ -307,34 +309,13 @@ async def backtest_model_stream(config: BacktestConfig):
             
             yield yield_progress("Calculating metrics...", 90)
             
-            # Calculate summary metrics
-            actual_values = [p.actual_close for p in predictions]
-            predicted_values = [p.predicted_close for p in predictions]
             
-            mae = mean_absolute_error(actual_values, predicted_values)
-            rmse = np.sqrt(mean_squared_error(actual_values, predicted_values))
-            r2 = r2_score(actual_values, predicted_values)
-            mape = np.mean(np.abs((np.array(actual_values) - np.array(predicted_values)) / np.array(actual_values))) * 100
-            
-            # Directional accuracy
-            if len(predictions) > 1:
-                correct_direction = 0
-                for i in range(1, len(predictions)):
-                    actual_direction = predictions[i].actual_close > predictions[i-1].actual_close
-                    pred_direction = predictions[i].predicted_close > predictions[i-1].predicted_close
-                    if actual_direction == pred_direction:
-                        correct_direction += 1
-                directional_accuracy = (correct_direction / (len(predictions) - 1)) * 100
-            else:
-                directional_accuracy = 0.0
-            
-            summary_metrics = TrainingMetrics(
-                rmse=round(rmse, 4),
-                mae=round(mae, 4),
-                mape=round(mape, 2),
-                r2_score=round(r2, 4),
-                directional_accuracy=round(directional_accuracy, 2),
-                training_samples=predictions[0].training_samples if predictions else 0
+            metrics_service = get_metrics_service()
+            summary_metrics = metrics_service.calculate_from_predictions(
+                predictions=predictions,
+                actual_key='actual_close',
+                predicted_key='predicted_close',
+                training_samples_key='training_samples'
             )
             
             # Generate results

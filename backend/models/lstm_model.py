@@ -9,6 +9,8 @@ import json
 from datetime import datetime
 
 from services.feature_service import get_feature_service, FeatureSet
+from services.metrics_service import get_metrics_service
+
 
 
 class LSTMModel(nn.Module):
@@ -291,10 +293,7 @@ class LSTMStockPredictor:
         return history
     
     def get_validation_metrics(self) -> dict:
-        """
-        Calculate validation metrics using the stored validation data
-        Returns dict with rmse, mae, r2, mape (all in actual price scale)
-        """
+        """Calculate validation metrics using the stored validation data"""
         if self.X_val is None or self.y_val is None:
             raise ValueError("No validation data available. Train with use_validation=True first.")
         
@@ -314,24 +313,20 @@ class LSTMStockPredictor:
         y_true = self.target_scaler.inverse_transform(y_true_scaled.reshape(-1, 1)).flatten()
         y_pred = self.target_scaler.inverse_transform(y_pred_scaled.reshape(-1, 1)).flatten()
         
-        # Calculate metrics on ACTUAL PRICES
-        mse = np.mean((y_true - y_pred) ** 2)
-        rmse = np.sqrt(mse)
-        mae = np.mean(np.abs(y_true - y_pred))
+        # NEW: Use unified metrics service
+        metrics_service = get_metrics_service()
+        metrics = metrics_service.calculate_from_model_output(
+            y_true=y_true,
+            y_pred=y_pred,
+            training_samples=len(y_true)
+        )
         
-        # R2 score
-        ss_res = np.sum((y_true - y_pred) ** 2)
-        ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
-        r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
-        
-        # MAPE (with small epsilon to avoid division by zero)
-        mape = np.mean(np.abs((y_true - y_pred) / (np.abs(y_true) + 1e-8))) * 100
-        
+        # Return as dict for backward compatibility
         return {
-            'rmse': float(rmse),
-            'mae': float(mae),
-            'r2': float(r2),
-            'mape': float(mape)
+            'rmse': metrics.rmse,
+            'mae': metrics.mae,
+            'r2': metrics.r2_score,
+            'mape': metrics.mape
         }
     
     def predict(self, df: pd.DataFrame, last_sequence_only: bool = True) -> np.ndarray:
