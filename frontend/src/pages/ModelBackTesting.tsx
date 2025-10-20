@@ -22,6 +22,21 @@ interface ModelConfig {
   validation_sequences?: number;
   early_stopping_patience?: number;
   use_validation?: boolean;
+  // Directional loss parameters
+  use_directional_loss?: boolean;
+  directional_loss_type?: string;
+  price_weight: number;
+  direction_weight: number;
+  direction_threshold?: number;
+
+  // NEW: Focal loss specific parameters
+  focal_alpha: number;
+  focal_gamma: number;
+  
+  // NEW: Adaptive loss specific parameters
+  initial_price_weight: number;
+  target_direction_accuracy: number;
+  adaptation_rate: number;
 }
 
 interface BacktestConfig {
@@ -93,6 +108,21 @@ export default function ModelBacktesting() {
     validation_sequences: 30,
     early_stopping_patience: 10,
     use_validation: true,
+    // Directional loss defaults (ensure numeric values to avoid undefined)
+    use_directional_loss: false,
+    directional_loss_type: "standard",
+    price_weight: 0.6,
+    direction_weight: 0.4,
+    direction_threshold: 0.0,
+    
+    // NEW: Focal loss defaults
+    focal_alpha: 0.25,
+    focal_gamma: 2.0,
+    
+    // NEW: Adaptive loss defaults
+    initial_price_weight: 0.7,
+    target_direction_accuracy: 60.0,
+    adaptation_rate: 0.01,
   },
   retrain_for_each_prediction: false,
   notes: "",
@@ -170,10 +200,14 @@ export default function ModelBacktesting() {
 
   // Helper function to update model config
   const handleModelConfigChange = (field: keyof ModelConfig, value: number | string | boolean) => {
-    setConfig({
-      ...config,
-      model_spec: { ...config.model_spec, [field]: value }
-    });
+    
+    setConfig(prevConfig => ({
+      ...prevConfig,
+      model_spec: { 
+        ...prevConfig.model_spec, 
+        [field]: value 
+      }
+    }));
   };
 
   return (
@@ -439,6 +473,7 @@ export default function ModelBacktesting() {
             </div>
 
             {config.model_spec.model_type === 'lstm' && (
+              <>
               <div className="space-y-4 bg-blue-50 p-4 rounded-lg">
                 <h3 className="font-semibold">LSTM Parameters</h3>
                 
@@ -509,6 +544,69 @@ export default function ModelBacktesting() {
                   Note: LSTM training is slower. Epochs are automatically reduced to 1/3 for backtesting.
                 </p>
               </div>
+              {/* NEW: Directional Loss Configuration */}
+              <div className="border-t pt-4">
+                <h4 className="font-medium text-sm mb-3">Directional Loss (Experimental)</h4>
+                
+                <div className="flex items-center mb-3">
+                  <input
+                    type="checkbox"
+                    checked={config.model_spec.use_directional_loss}
+                    onChange={(e) => handleModelConfigChange('use_directional_loss', e.target.checked)}
+                    className="mr-2"
+                    title="Enable directional loss"
+                  />
+                  <label className="text-sm">Enable directional loss for better direction accuracy</label>
+                </div>
+                
+                {config.model_spec.use_directional_loss && (
+                  <div className="space-y-3 ml-4 border-l-2 border-blue-200 pl-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Loss Type</label>
+                      <select
+                        value={config.model_spec.directional_loss_type}
+                        onChange={(e) => handleModelConfigChange('directional_loss_type', e.target.value)}
+                        className="w-full p-2 border rounded text-sm"
+                        title="Select directional loss type"
+                      >
+                        <option value="standard">Standard (Balanced)</option>
+                        <option value="focal">Focal (Focus on hard examples)</option>
+                        <option value="adaptive">Adaptive (Auto-adjusting weights)</option>
+                        <option value="ranking">Ranking (Relative performance)</option>
+                      </select>
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium mb-1">
+                        Price Weight: {config.model_spec.price_weight.toFixed(1)}
+                      </label>
+                      <input
+                        type="range"
+                        min="0.1"
+                        max="0.9"
+                        step="0.1"
+                        value={config.model_spec.price_weight}
+                        onChange={(e) => {
+                          const priceWeight = parseFloat(e.target.value);
+                          handleModelConfigChange('price_weight', priceWeight);
+                          handleModelConfigChange('direction_weight', 1.0 - priceWeight);
+                        }}
+                        className="w-full"
+                        title="Set price weight"
+                      />
+                      <p className="text-xs text-gray-500">
+                        Higher = more focus on price accuracy vs direction accuracy
+                      </p>
+                    </div>
+                    
+                    <div className="text-xs text-yellow-700 bg-yellow-50 p-2 rounded">
+                      <strong>Note:</strong> Directional loss is experimental. 
+                      Start with standard type and 0.7 price weight.
+                    </div>
+                  </div>
+                )}
+              </div>
+              </>
             )}
 
             {config.model_spec.model_type === 'random_forest' && (

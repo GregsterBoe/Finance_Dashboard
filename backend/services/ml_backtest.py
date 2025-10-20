@@ -109,10 +109,23 @@ def train_lstm_for_date(df: pd.DataFrame, end_idx: int, config: BacktestConfig):
         num_layers=config.model_spec.num_layers,
         dropout=config.model_spec.dropout,
         learning_rate=config.model_spec.learning_rate,
-        model_dir='lstm_models_backtest'
+        model_dir='lstm_models_backtest',
+        # advanced parameters
+        bidirectional=config.model_spec.bidirectional,
+        use_layer_norm=config.model_spec.use_layer_norm,
+        use_residual=config.model_spec.use_residual,
+        weight_decay=config.model_spec.weight_decay,
+        gradient_clip_norm=config.model_spec.gradient_clip_norm,
+        use_directional_loss=config.model_spec.use_directional_loss,
+        directional_loss_config={
+            'loss_type': config.model_spec.directional_loss_type,
+            'price_weight': config.model_spec.price_weight,
+            'direction_weight': config.model_spec.direction_weight,
+            'direction_threshold': config.model_spec.direction_threshold
+        }
     )
     
-    backtest_epochs = max(20, config.model_spec.epochs // 3)
+    backtest_epochs = max(20, config.model_spec.epochs)
     
     try:
         history = predictor.train(
@@ -121,7 +134,10 @@ def train_lstm_for_date(df: pd.DataFrame, end_idx: int, config: BacktestConfig):
             batch_size=config.model_spec.batch_size,
             validation_sequences=config.model_spec.validation_sequences,
             early_stopping_patience=config.model_spec.early_stopping_patience,
-            use_validation=config.model_spec.use_validation
+            use_validation=config.model_spec.use_validation,
+            lr_patience=config.model_spec.lr_patience,
+            lr_factor=config.model_spec.lr_factor,
+            min_lr=config.model_spec.min_lr
         )
         return predictor, len(df_train)
     except Exception as e:
@@ -194,14 +210,14 @@ async def backtest_model_stream(config: BacktestConfig):
             if config.backtest_mode == "custom":
                 start_date = datetime.strptime(config.backtest_start_date, "%Y-%m-%d")
             else:
-                calendar_days_needed = int((config.backtest_days + config.training_history_days + 30) * trading_day_buffer)
+                calendar_days_needed = int((config.backtest_days + config.training_history_days) * trading_day_buffer)
                 start_date = datetime.now() - timedelta(days=calendar_days_needed)
             
             end_date = datetime.now()
             data_provider = get_data_provider()
             df = data_provider.get_stock_history(config.ticker, start=start_date, end=end_date)
             
-            min_trading_days = config.training_history_days + 30
+            min_trading_days = config.backtest_days + config.model_spec.sequence_length
             if df.empty or len(df) < min_trading_days:
                 yield yield_progress("Error: Insufficient data", 100, {"error": True})
                 return

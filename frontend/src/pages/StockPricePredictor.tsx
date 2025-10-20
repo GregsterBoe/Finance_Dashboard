@@ -22,6 +22,32 @@ interface ModelConfig {
   validation_sequences: number;  // NEW
   early_stopping_patience: number;  // NEW
   use_validation: boolean;  // NEW
+
+  // NEW: Enhanced LSTM parameters
+  bidirectional: boolean;
+  use_layer_norm: boolean;
+  use_residual: boolean;
+  weight_decay: number;
+  gradient_clip_norm: number;
+  lr_patience: number;
+  lr_factor: number;
+  min_lr: number;
+  
+  // NEW: Directional loss parameters
+  use_directional_loss: boolean;
+  directional_loss_type: string;
+  price_weight: number;
+  direction_weight: number;
+  direction_threshold: number;
+  
+  // NEW: Focal loss specific parameters
+  focal_alpha: number;
+  focal_gamma: number;
+  
+  // NEW: Adaptive loss specific parameters
+  initial_price_weight: number;
+  target_direction_accuracy: number;
+  adaptation_rate: number;
 }
 
 
@@ -74,7 +100,8 @@ export default function StockPricePredictor() {
     min_samples_leaf: 1,
     n_estimators: 100,
     random_state: 42,
-    // LSTM defaults
+    
+    // Basic LSTM defaults
     sequence_length: 30,
     hidden_size: 64,
     num_layers: 2,
@@ -85,6 +112,32 @@ export default function StockPricePredictor() {
     validation_sequences: 30,
     early_stopping_patience: 10,
     use_validation: true,
+    
+    // NEW: Enhanced LSTM defaults
+    bidirectional: true,
+    use_layer_norm: true,
+    use_residual: true,
+    weight_decay: 0.00001,
+    gradient_clip_norm: 1.0,
+    lr_patience: 7,
+    lr_factor: 0.5,
+    min_lr: 0.000001,
+    
+    // NEW: Directional loss defaults
+    use_directional_loss: false,
+    directional_loss_type: 'standard',
+    price_weight: 0.7,
+    direction_weight: 0.3,
+    direction_threshold: 0.0,
+    
+    // NEW: Focal loss defaults
+    focal_alpha: 0.25,
+    focal_gamma: 2.0,
+    
+    // NEW: Adaptive loss defaults
+    initial_price_weight: 0.7,
+    target_direction_accuracy: 60.0,
+    adaptation_rate: 0.01,
   },
   notes: "",
 });
@@ -160,10 +213,14 @@ export default function StockPricePredictor() {
     : [];
 
   const handleModelConfigChange = (field: keyof ModelConfig, value: number | string | boolean) => {
-    setConfig({
-      ...config,
-      model_spec: { ...config.model_spec, [field]: value }
-    });
+    
+    setConfig(prevConfig => ({
+      ...prevConfig,
+      model_spec: { 
+        ...prevConfig.model_spec, 
+        [field]: value 
+      }
+    }));
   };
 
   return (
@@ -480,6 +537,239 @@ export default function StockPricePredictor() {
                       </p>
                     </div>
                   </label>
+                </div>
+                <div className="border-t pt-4 mt-6">
+                  <h4 className="font-medium text-base mb-4 text-blue-800">Directional Loss (Experimental)</h4>
+                  
+                  <div className="bg-blue-50 p-4 rounded-lg mb-4">
+                    <label className="flex items-start space-x-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.model_spec.use_directional_loss}
+                        onChange={(e) => {
+                          handleModelConfigChange('use_directional_loss', e.target.checked);
+                          // Reset direction_weight when toggling
+                          if (e.target.checked) {
+                            handleModelConfigChange('direction_weight', 1.0 - config.model_spec.price_weight);
+                          }
+                        }}
+                        className="w-5 h-5 mt-1"
+                      />
+                      <div>
+                        <span className="font-medium">Enable directional loss</span>
+                        <p className="text-xs text-gray-600 mt-1">
+                          Optimizes for both price accuracy AND directional accuracy (up/down predictions).
+                          May improve trading signal quality but could reduce absolute price accuracy.
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+                  
+                  {config.model_spec.use_directional_loss && (
+                    <div className="space-y-4 ml-4 border-l-2 border-blue-200 pl-4">
+                      
+                      {/* Loss Type Selection */}
+                      <div>
+                        <label className="block text-sm font-medium mb-2">Loss Type</label>
+                        <select
+                          value={config.model_spec.directional_loss_type}
+                          onChange={(e) => handleModelConfigChange('directional_loss_type', e.target.value)}
+                          className="w-full p-2 border rounded text-sm"
+                          title="Select directional loss type"
+                        >
+                          <option value="standard">Standard (Balanced price + direction)</option>
+                          <option value="focal">Focal (Focus on hard examples)</option>
+                          <option value="adaptive">Adaptive (Auto-adjusting weights)</option>
+                        </select>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {config.model_spec.directional_loss_type === 'standard' && 'Combines MSE loss with direction prediction. Good starting point.'}
+                          {config.model_spec.directional_loss_type === 'focal' && 'Focuses more on difficult-to-predict examples. May help with edge cases.'}
+                          {config.model_spec.directional_loss_type === 'adaptive' && 'Automatically adjusts focus based on current directional accuracy.'}
+                        </p>
+                      </div>
+
+                      {/* Standard Loss Parameters */}
+                      {config.model_spec.directional_loss_type === 'standard' && (
+                        <>
+                          <div>
+                            <label className="block text-sm font-medium mb-2">
+                              Price vs Direction Balance: {(config.model_spec.price_weight * 100).toFixed(0)}% price / {(config.model_spec.direction_weight * 100).toFixed(0)}% direction
+                            </label>
+                            <input
+                              type="range"
+                              min="0.1"
+                              max="0.9"
+                              step="0.1"
+                              value={config.model_spec.price_weight}
+                              onChange={(e) => {
+                                const priceWeight = parseFloat(e.target.value);
+                                handleModelConfigChange('price_weight', priceWeight);
+                                handleModelConfigChange('direction_weight', 1.0 - priceWeight);
+                              }}
+                              className="w-full"
+                              title="Set price weight"
+                            />
+                            <div className="flex justify-between text-xs text-gray-500 mt-1">
+                              <span>More direction focus</span>
+                              <span>More price focus</span>
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium mb-2">
+                              Direction Threshold: {config.model_spec.direction_threshold}
+                            </label>
+                            <input
+                              type="range"
+                              min="-0.05"
+                              max="0.05"
+                              step="0.01"
+                              value={config.model_spec.direction_threshold}
+                              onChange={(e) => handleModelConfigChange('direction_threshold', parseFloat(e.target.value))}
+                              className="w-full"
+                              title="Set direction threshold"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">
+                              Threshold for direction calculation. 0 = any increase is "up", negative = require larger moves.
+                            </p>
+                          </div>
+                        </>
+                      )}
+
+                      {/* Focal Loss Parameters */}
+                      {config.model_spec.directional_loss_type === 'focal' && (
+                        <>
+                          <div>
+                            <label className="block text-sm font-medium mb-2">
+                              Price Weight: {config.model_spec.price_weight.toFixed(1)}
+                            </label>
+                            <input
+                              type="range"
+                              min="0.1"
+                              max="0.9"
+                              step="0.1"
+                              value={config.model_spec.price_weight}
+                              onChange={(e) => {
+                                const priceWeight = parseFloat(e.target.value);
+                                handleModelConfigChange('price_weight', priceWeight);
+                                handleModelConfigChange('direction_weight', 1.0 - priceWeight);
+                              }}
+                              className="w-full"
+                              title="Set price weight"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium mb-2">
+                              Focal Alpha: {config.model_spec.focal_alpha}
+                            </label>
+                            <input
+                              type="range"
+                              min="0.1"
+                              max="0.9"
+                              step="0.05"
+                              value={config.model_spec.focal_alpha}
+                              onChange={(e) => handleModelConfigChange('focal_alpha', parseFloat(e.target.value))}
+                              className="w-full"
+                              title="Set focal alpha"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">
+                              Weighting factor for rare examples (0.25 is typical)
+                            </p>
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium mb-2">
+                              Focal Gamma: {config.model_spec.focal_gamma}
+                            </label>
+                            <input
+                              type="range"
+                              min="0.5"
+                              max="5.0"
+                              step="0.5"
+                              value={config.model_spec.focal_gamma}
+                              onChange={(e) => handleModelConfigChange('focal_gamma', parseFloat(e.target.value))}
+                              className="w-full"
+                              title="Set focal gamma"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">
+                              Focus intensity on hard examples (2.0 is typical, higher = more focus)
+                            </p>
+                          </div>
+                        </>
+                      )}
+
+                      {/* Adaptive Loss Parameters */}
+                      {config.model_spec.directional_loss_type === 'adaptive' && (
+                        <>
+                          <div>
+                            <label className="block text-sm font-medium mb-2">
+                              Initial Price Weight: {config.model_spec.initial_price_weight}
+                            </label>
+                            <input
+                              type="range"
+                              min="0.1"
+                              max="0.9"
+                              step="0.1"
+                              value={config.model_spec.initial_price_weight}
+                              onChange={(e) => handleModelConfigChange('initial_price_weight', parseFloat(e.target.value))}
+                              className="w-full"
+                              title="Initial weight for price loss"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">
+                              Starting balance - will adapt during training
+                            </p>
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium mb-2">
+                              Target Direction Accuracy: {config.model_spec.target_direction_accuracy}%
+                            </label>
+                            <input
+                              type="range"
+                              min="50"
+                              max="80"
+                              step="5"
+                              value={config.model_spec.target_direction_accuracy}
+                              onChange={(e) => handleModelConfigChange('target_direction_accuracy', parseFloat(e.target.value))}
+                              className="w-full"
+                              title="Set target direction accuracy"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">
+                              Target directional accuracy - loss will adapt to reach this
+                            </p>
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium mb-2">
+                              Adaptation Rate: {config.model_spec.adaptation_rate}
+                            </label>
+                            <input
+                              type="range"
+                              min="0.001"
+                              max="0.1"
+                              step="0.001"
+                              value={config.model_spec.adaptation_rate}
+                              onChange={(e) => handleModelConfigChange('adaptation_rate', parseFloat(e.target.value))}
+                              className="w-full"
+                              title="Set adaptation rate for weights"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">
+                              How fast to adapt weights (0.01 is typical)
+                            </p>
+                          </div>
+                        </>
+                      )}
+
+                      {/* Warning/Info Box */}
+                      <div className="text-xs text-yellow-700 bg-yellow-50 p-3 rounded border border-yellow-200">
+                        <strong>Experimental Feature:</strong> Directional loss is still being optimized. 
+                        Start with "Standard" type and 60-70% price weight. Monitor both price accuracy and directional accuracy in results.
+                        <br/><br/>
+                        <strong>Expected impact:</strong> Better directional predictions but potentially slightly worse absolute price accuracy.
+                      </div>
+                    </div>
+                  )}
                 </div>
               </>
             )}

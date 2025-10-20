@@ -31,6 +31,33 @@ class ModelConfig(BaseModel):
     validation_sequences: Optional[int] = Field(default=30, ge=10, le=100)
     early_stopping_patience: Optional[int] = Field(default=10, ge=3, le=30)
     use_validation: Optional[bool] = Field(default=True)
+
+    # New enhancement parameters
+    bidirectional: bool = True  # Use bidirectional LSTM
+    use_layer_norm: bool = True  # Layer normalization
+    use_residual: bool = True  # Residual connections
+    weight_decay: float = 1e-5  # L2 regularization
+    gradient_clip_norm: float = 1.0  # Gradient clipping
+    
+    # Advanced learning rate scheduling
+    lr_patience: int = 7  # Patience for learning rate reduction
+    lr_factor: float = 0.5  # Factor to reduce learning rate
+    min_lr: float = 1e-6  # Minimum learning rate
+
+    use_directional_loss: Optional[bool] = Field(default=False)
+    directional_loss_type: Optional[str] = Field(default='standard')  # 'standard', 'focal', 'ranking', 'adaptive'
+    price_weight: Optional[float] = Field(default=0.7, ge=0.1, le=0.9)
+    direction_weight: Optional[float] = Field(default=0.3, ge=0.1, le=0.9)
+    direction_threshold: Optional[float] = Field(default=0.0, ge=-0.05, le=0.05)
+
+    # NEW: Focal loss specific parameters
+    focal_alpha: Optional[float] = Field(default=0.25, ge=0.1, le=0.9)
+    focal_gamma: Optional[float] = Field(default=2.0, ge=0.5, le=5.0)
+    
+    # NEW: Adaptive loss specific parameters
+    initial_price_weight: Optional[float] = Field(default=0.7, ge=0.1, le=0.9)
+    target_direction_accuracy: Optional[float] = Field(default=60.0, ge=50.0, le=80.0)
+    adaptation_rate: Optional[float] = Field(default=0.01, ge=0.001, le=0.1)
     
     class Config:
         use_enum_values = True

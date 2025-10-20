@@ -44,85 +44,115 @@ class TrainingResponse(BaseModel):
 
 def train_lstm_model(df: pd.DataFrame, config: TrainingConfig):
     """
-    Simpler version - use validation loss from training directly
-    This avoids the alignment complexity
+    Updated LSTM training with directional loss support
     """
     
-    # Create LSTM predictor
+    # Create LSTM predictor with ALL the new parameters
     predictor = LSTMStockPredictor(
         sequence_length=config.model_spec.sequence_length,
         hidden_size=config.model_spec.hidden_size,
         num_layers=config.model_spec.num_layers,
         dropout=config.model_spec.dropout,
         learning_rate=config.model_spec.learning_rate,
-        model_dir='lstm_models'
+        model_dir='lstm_models',
+        
+        # NEW: Enhanced LSTM parameters (add these if they exist in ModelConfig)
+        bidirectional=getattr(config.model_spec, 'bidirectional', True),
+        use_layer_norm=getattr(config.model_spec, 'use_layer_norm', True),
+        use_residual=getattr(config.model_spec, 'use_residual', True),
+        weight_decay=getattr(config.model_spec, 'weight_decay', 1e-5),
+        gradient_clip_norm=getattr(config.model_spec, 'gradient_clip_norm', 1.0),
+        
+        # NEW: Directional loss configuration
+        use_directional_loss=getattr(config.model_spec, 'use_directional_loss', False),
+        directional_loss_config={
+            'loss_type': getattr(config.model_spec, 'directional_loss_type', 'standard'),
+            'price_weight': getattr(config.model_spec, 'price_weight', 0.7),
+            'direction_weight': getattr(config.model_spec, 'direction_weight', 0.3),
+            'direction_threshold': getattr(config.model_spec, 'direction_threshold', 0.0),
+            # Optional focal loss parameters
+            'focal_alpha': getattr(config.model_spec, 'focal_alpha', 0.25),
+            'focal_gamma': getattr(config.model_spec, 'focal_gamma', 2.0),
+            # Optional adaptive loss parameters  
+            'initial_price_weight': getattr(config.model_spec, 'initial_price_weight', 0.7),
+            'target_direction_accuracy': getattr(config.model_spec, 'target_direction_accuracy', 60.0),
+            'adaptation_rate': getattr(config.model_spec, 'adaptation_rate', 0.01)
+        }
     )
     
-    # Train the model
+    # Train the model with enhanced parameters
     history = predictor.train(
         df, 
         epochs=config.model_spec.epochs,
         batch_size=config.model_spec.batch_size,
         validation_sequences=config.model_spec.validation_sequences,
         early_stopping_patience=config.model_spec.early_stopping_patience,
-        use_validation=config.model_spec.use_validation
+        use_validation=config.model_spec.use_validation,
+        
+        # NEW: Add these if they exist in ModelConfig
+        lr_patience=getattr(config.model_spec, 'lr_patience', 7),
+        lr_factor=getattr(config.model_spec, 'lr_factor', 0.5),
+        min_lr=getattr(config.model_spec, 'min_lr', 1e-6)
     )
     
     # Make prediction for next day
     next_day_pred = predictor.predict(df, last_sequence_only=True)
     next_day_prediction = next_day_pred[0][0]
     
-    # Get metrics from training history
+    # Get metrics from training history or validation
     if config.model_spec.use_validation:
-        # Use actual validation metrics (accurate, not approximated)
-        validation_metrics_dict = predictor.get_validation_metrics()
-        rmse = validation_metrics_dict['rmse']
-        mae = validation_metrics_dict['mae']
-        r2 = validation_metrics_dict['r2']
-        mape = validation_metrics_dict['mape']
+        validation_metrics = predictor.get_validation_metrics()
+        rmse = validation_metrics['rmse']
+        mae = validation_metrics['mae']
+        r2 = validation_metrics['r2']
+        mape = validation_metrics['mape']
     else:
-        # No validation - use training loss as approximation
-        final_train_loss = history['train_loss'][-1]
-        rmse = np.sqrt(final_train_loss)
-        mae = rmse * 0.8
+        # Fallback to final training loss
+        final_loss = history['train_loss'][-1]
+        rmse = np.sqrt(final_loss)
+        mae = final_loss
         r2 = 0.0
-        mape = (rmse / df['Close'].iloc[-1]) * 100
+        mape = 0.0
     
-    # Save the model
-    metadata = {
-        'training_samples': len(df),
-        'final_train_loss': history['train_loss'][-1],
+    # Save model
+    model_path = predictor.save_model(
+        config.ticker, 
+        metadata={
+            'training_samples': len(df),
+            'use_directional_loss': predictor.use_directional_loss,
+            'directional_loss_config': predictor.directional_loss_config
+        }
+    )
+    
+    # Create training period info
+    training_period = {
+        "start": config.start_date,
+        "end": config.end_date,
+        "days": len(df)
     }
     
-    if config.model_spec.use_validation and history.get('val_loss'):
-        metadata['final_val_loss'] = history['val_loss'][-1]
-        if history.get('stopped_epoch'):
-            metadata['stopped_epoch'] = history['stopped_epoch']
-    
-    model_path = predictor.save_model(config.ticker, metadata=metadata)
-
-     # Generate run ID and prepare data for ResultsManager
-    run_id = generate_run_id(config.ticker, "training")
-    
-    # Get prediction date (next trading day)
-    last_date = df.index[-1]
-    prediction_date = last_date + timedelta(days=1)
-    while prediction_date.weekday() >= 5:  # Skip weekends
-        prediction_date += timedelta(days=1)
-    
-    # Get last close price and calculate change
-    last_close = df['Close'].iloc[-1]
-    predicted_change = next_day_prediction - last_close
-    predicted_change_pct = (predicted_change / last_close) * 100
-    
-    # Create objects for ResultsManager
+    # Save training result
     training_metrics = TrainingMetrics(
         rmse=round(rmse, 4),
         mae=round(mae, 4),
         r2_score=round(r2, 4),
         mape=round(mape, 4),
-        training_samples=len(df)
+        training_samples=len(df),
+        # NEW: Add directional accuracy if available
+        directional_accuracy=round(history.get('train_direction_accuracy', [0])[-1], 2) if history.get('train_direction_accuracy') else None
     )
+    
+    # Get last close price for prediction
+    last_close = df['Close'].iloc[-1]
+    predicted_change = next_day_prediction - last_close
+    predicted_change_pct = (predicted_change / last_close) * 100
+    
+    # Generate run ID and prediction date
+    run_id = generate_run_id(config.ticker, "training")
+    last_date = df.index[-1]
+    prediction_date = last_date + timedelta(days=1)
+    while prediction_date.weekday() >= 5:
+        prediction_date += timedelta(days=1)
     
     prediction = PredictionResult(
         date=prediction_date.strftime("%Y-%m-%d"),
@@ -132,12 +162,7 @@ def train_lstm_model(df: pd.DataFrame, config: TrainingConfig):
         predicted_change_pct=round(predicted_change_pct, 2)
     )
     
-    training_period = {
-        "start": config.start_date,
-        "end": config.end_date,
-        "days": len(df)
-    }
-
+    # Save result
     training_result = TrainingResult(
         run_id=run_id,
         run_type="training",
@@ -147,7 +172,7 @@ def train_lstm_model(df: pd.DataFrame, config: TrainingConfig):
         training_period=training_period,
         metrics=training_metrics,
         prediction=prediction,
-        feature_importance={},
+        feature_importance={},  # LSTM doesn't have traditional feature importance
         notes=config.notes
     )
     

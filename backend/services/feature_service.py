@@ -92,38 +92,64 @@ class FeatureService:
         return df
     
     def _create_standard_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Create standard technical indicators"""
+        """Create standard technical indicators with NaN handling"""
+        
         # Simple Moving Averages
         df['sma_5'] = df['Close'].rolling(window=5).mean()
         df['sma_10'] = df['Close'].rolling(window=10).mean()
         df['sma_20'] = df['Close'].rolling(window=20).mean()
         
+        # Fill initial NaN values with the close price for SMAs
+        df['sma_5'] = df['sma_5'].fillna(df['Close'])
+        df['sma_10'] = df['sma_10'].fillna(df['Close'])
+        df['sma_20'] = df['sma_20'].fillna(df['Close'])
+        
         # Exponential Moving Averages
         df['ema_5'] = df['Close'].ewm(span=5, adjust=False).mean()
         df['ema_10'] = df['Close'].ewm(span=10, adjust=False).mean()
         
-        # Volatility (rolling standard deviation of returns)
+        # EMA handles NaN better, but still fill just in case
+        df['ema_5'] = df['ema_5'].fillna(df['Close'])
+        df['ema_10'] = df['ema_10'].fillna(df['Close'])
+        
+        # Volatility (with minimum window handling)
         df['volatility_5'] = df['returns'].rolling(window=5).std()
         df['volatility_10'] = df['returns'].rolling(window=10).std()
+        
+        # Fill volatility NaN with small default value
+        df['volatility_5'] = df['volatility_5'].fillna(0.01)
+        df['volatility_10'] = df['volatility_10'].fillna(0.01)
         
         # Price momentum
         df['momentum_5'] = df['Close'] - df['Close'].shift(5)
         df['momentum_10'] = df['Close'] - df['Close'].shift(10)
         
+        # Fill momentum NaN with 0
+        df['momentum_5'] = df['momentum_5'].fillna(0)
+        df['momentum_10'] = df['momentum_10'].fillna(0)
+        
         # Volume features
         df['volume_sma_5'] = df['Volume'].rolling(window=5).mean()
         df['volume_ratio'] = df['Volume'] / (df['volume_sma_5'] + 1e-8)
         
+        # Fill volume features
+        df['volume_sma_5'] = df['volume_sma_5'].fillna(df['Volume'])
+        df['volume_ratio'] = df['volume_ratio'].fillna(1.0)
+        
         return df
-    
+
     def _create_advanced_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Create advanced technical indicators (RSI, MACD, Bollinger Bands, etc.)"""
+        """Create advanced technical indicators with proper NaN handling"""
+        
         # RSI (Relative Strength Index)
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / (loss + 1e-8)
         df['rsi'] = 100 - (100 / (1 + rs))
+        
+        # Fill RSI NaN with neutral value (50)
+        df['rsi'] = df['rsi'].fillna(50)
         
         # MACD (Moving Average Convergence Divergence)
         exp1 = df['Close'].ewm(span=12, adjust=False).mean()
@@ -132,6 +158,11 @@ class FeatureService:
         df['macd_signal'] = df['macd'].ewm(span=9, adjust=False).mean()
         df['macd_diff'] = df['macd'] - df['macd_signal']
         
+        # Fill MACD NaN with 0
+        df['macd'] = df['macd'].fillna(0)
+        df['macd_signal'] = df['macd_signal'].fillna(0)
+        df['macd_diff'] = df['macd_diff'].fillna(0)
+        
         # Bollinger Bands
         df['bb_middle'] = df['Close'].rolling(window=20).mean()
         bb_std = df['Close'].rolling(window=20).std()
@@ -139,12 +170,21 @@ class FeatureService:
         df['bb_lower'] = df['bb_middle'] - (bb_std * 2)
         df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['bb_middle']
         
+        # Fill Bollinger Bands NaN
+        df['bb_middle'] = df['bb_middle'].fillna(df['Close'])
+        df['bb_upper'] = df['bb_upper'].fillna(df['Close'])
+        df['bb_lower'] = df['bb_lower'].fillna(df['Close'])
+        df['bb_width'] = df['bb_width'].fillna(0.01)
+        
         # ATR (Average True Range)
         high_low = df['High'] - df['Low']
         high_close = np.abs(df['High'] - df['Close'].shift())
         low_close = np.abs(df['Low'] - df['Close'].shift())
         true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
         df['atr'] = true_range.rolling(window=14).mean()
+        
+        # Fill ATR NaN with median value
+        df['atr'] = df['atr'].fillna(df['atr'].median())
         
         return df
     

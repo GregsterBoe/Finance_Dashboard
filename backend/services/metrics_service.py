@@ -71,24 +71,38 @@ class MetricsService:
     @staticmethod
     def _calculate_directional_accuracy(
         actual: np.ndarray,
-        predicted: np.ndarray
+        predicted: np.ndarray,
+        previous_close: np.ndarray = None
     ) -> float:
         """
         Calculate directional accuracy (percentage of correct up/down predictions).
         
+        For stock prediction, we want to know:
+        - Did we correctly predict if stock will go UP or DOWN from previous close?
+        
         Args:
-            actual: Array of actual values (time-ordered)
-            predicted: Array of predicted values (time-ordered)
+            actual: Array of actual close prices
+            predicted: Array of predicted close prices  
+            previous_close: Array of previous day's close prices (optional)
             
         Returns:
             Directional accuracy as percentage (0-100)
         """
-        if len(actual) < 2:
+        if len(actual) < 1:
             return 0.0
         
-        # Calculate direction changes
-        actual_direction = np.diff(actual) > 0
-        predicted_direction = np.diff(predicted) > 0
+        # If we don't have previous_close, we need at least 2 points to calculate direction
+        if previous_close is None:
+            if len(actual) < 2:
+                return 0.0
+            # Use previous actual as the reference point
+            previous_close = actual[:-1]
+            actual = actual[1:]
+            predicted = predicted[1:]
+        
+        # Calculate actual and predicted directions relative to previous close
+        actual_direction = actual > previous_close  # True = UP, False = DOWN
+        predicted_direction = predicted > previous_close  # True = UP, False = DOWN
         
         # Count correct predictions
         correct = np.sum(actual_direction == predicted_direction)

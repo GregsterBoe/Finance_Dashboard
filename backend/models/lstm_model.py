@@ -10,78 +10,191 @@ from datetime import datetime
 
 from services.feature_service import get_feature_service, FeatureSet
 from services.metrics_service import get_metrics_service
+from models.directional_loss import create_directional_loss
 
 
 
 class LSTMModel(nn.Module):
     """
-    LSTM model for stock price prediction
+    Enhanced LSTM model with bidirectional layers, layer normalization, and residual connections
     """
-    def __init__(self, input_size: int, hidden_size: int = 64, 
-                 num_layers: int = 2, dropout: float = 0.2):
+    def __init__(self, input_size: int,
+                hidden_size: int = 64, 
+                num_layers: int = 2,
+                dropout: float = 0.2, 
+                bidirectional: bool = True,
+                use_layer_norm: bool = True,
+                use_residual: bool = True):
         """
         Args:
             input_size: Number of input features
             hidden_size: Number of LSTM hidden units
             num_layers: Number of LSTM layers
             dropout: Dropout rate for regularization
+            bidirectional: Whether to use bidirectional LSTM
+            use_layer_norm: Whether to use layer normalization
+            use_residual: Whether to use residual connections
         """
         super(LSTMModel, self).__init__()
         
         self.hidden_size = hidden_size
         self.num_layers = num_layers
+        self.bidirectional = bidirectional
+        self.use_layer_norm = use_layer_norm
+        self.use_residual = use_residual
         
-        # LSTM layers
+        # Calculate LSTM output size (doubled if bidirectional)
+        lstm_output_size = hidden_size * 2 if bidirectional else hidden_size
+        
+        # LSTM layers with bidirectional support
         self.lstm = nn.LSTM(
             input_size=input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
             dropout=dropout if num_layers > 1 else 0,
-            batch_first=True
+            batch_first=True,
+            bidirectional=bidirectional
         )
         
-        # Fully connected output layer
-        self.fc = nn.Linear(hidden_size, 1)
+        # Layer normalization for LSTM output
+        if use_layer_norm:
+            self.layer_norm = nn.LayerNorm(lstm_output_size)
+        
+        # Residual connection projection (if input size != LSTM output size)
+        if use_residual and input_size != lstm_output_size:
+            self.residual_proj = nn.Linear(input_size, lstm_output_size)
+        else:
+            self.residual_proj = None
+        
+        # Dropout layer
+        self.dropout = nn.Dropout(dropout)
+        
+        # Fully connected layers with residual connection
+        self.fc1 = nn.Linear(lstm_output_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, 1)
+        
+        # Layer normalization for FC layers
+        if use_layer_norm:
+            self.fc_layer_norm = nn.LayerNorm(hidden_size)
+        
+        # Activation
+        self.relu = nn.ReLU()
         
     def forward(self, x):
         """
-        Forward pass
+        Forward pass with residual connections and layer normalization
         Args:
             x: Input tensor of shape (batch_size, sequence_length, input_size)
         Returns:
             Output tensor of shape (batch_size, 1)
         """
+        batch_size = x.size(0)
+        
         # Initialize hidden state and cell state
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+        num_directions = 2 if self.bidirectional else 1
+        h0 = torch.zeros(self.num_layers * num_directions, batch_size, self.hidden_size).to(x.device)
+        c0 = torch.zeros(self.num_layers * num_directions, batch_size, self.hidden_size).to(x.device)
         
         # LSTM forward pass
-        out, _ = self.lstm(x, (h0, c0))
+        lstm_out, _ = self.lstm(x, (h0, c0))
         
         # Take output from last time step
-        out = out[:, -1, :]
+        lstm_out = lstm_out[:, -1, :]
         
-        # Pass through fully connected layer
-        out = self.fc(out)
+        # Apply layer normalization
+        if self.use_layer_norm:
+            lstm_out = self.layer_norm(lstm_out)
+        
+        # Residual connection (project last input if needed)
+        if self.use_residual:
+            residual = x[:, -1, :]  # Last time step of input
+            if self.residual_proj is not None:
+                residual = self.residual_proj(residual)
+            lstm_out = lstm_out + residual
+        
+        # First FC layer with dropout
+        out = self.dropout(lstm_out)
+        out = self.fc1(out)
+        out = self.relu(out)
+        
+        # Layer normalization for FC
+        if self.use_layer_norm:
+            out = self.fc_layer_norm(out)
+        
+        # Second FC layer (output)
+        out = self.dropout(out)
+        out = self.fc2(out)
         
         return out
 
 
+class EarlyStopping:
+    """Enhanced early stopping with multiple criteria"""
+    def __init__(self, patience: int = 10, min_delta: float = 1e-6, 
+                 restore_best_weights: bool = True, monitor_train: bool = True):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.restore_best_weights = restore_best_weights
+        self.monitor_train = monitor_train
+        
+        self.best_loss = float('inf')
+        self.best_train_loss = float('inf')
+        self.counter = 0
+        self.best_weights = None
+        self.should_stop = False
+        
+    def __call__(self, val_loss: float, train_loss: float, model: nn.Module):
+        # Primary criterion: validation loss improvement
+        improved = val_loss < (self.best_loss - self.min_delta)
+        
+        # Secondary criterion: avoid overfitting (train loss much better than val loss)
+        if self.monitor_train and val_loss > train_loss * 2.0:
+            # Potential overfitting detected
+            improved = False
+        
+        if improved:
+            self.best_loss = val_loss
+            self.best_train_loss = train_loss
+            self.counter = 0
+            if self.restore_best_weights:
+                self.best_weights = model.state_dict().copy()
+        else:
+            self.counter += 1
+            
+        if self.counter >= self.patience:
+            self.should_stop = True
+            if self.restore_best_weights and self.best_weights is not None:
+                model.load_state_dict(self.best_weights)
+        
+        return self.should_stop
+
+
 class LSTMStockPredictor:
     """
-    Complete LSTM-based stock price predictor with training and inference
+    Enhanced LSTM-based stock price predictor with advanced training features
     """
     def __init__(self, sequence_length: int = 20, hidden_size: int = 64,
                  num_layers: int = 2, dropout: float = 0.2, 
-                 learning_rate: float = 0.001, model_dir: str = 'lstm_models'):
+                 learning_rate: float = 0.001, model_dir: str = 'lstm_models',
+                 bidirectional: bool = True, use_layer_norm: bool = True,
+                 use_residual: bool = True, weight_decay: float = 1e-5,
+                 gradient_clip_norm: float = 1.0, use_directional_loss: bool = False,
+                 directional_loss_config: dict = None):
         """
         Args:
-            sequence_length: Number of past days to use for prediction (default 20, reduced from 30)
+            sequence_length: Number of past days to use for prediction
             hidden_size: LSTM hidden layer size
             num_layers: Number of LSTM layers
             dropout: Dropout rate
-            learning_rate: Learning rate for optimizer
+            learning_rate: Initial learning rate
             model_dir: Directory to save model weights
+            bidirectional: Use bidirectional LSTM
+            use_layer_norm: Use layer normalization
+            use_residual: Use residual connections
+            weight_decay: L2 regularization strength
+            gradient_clip_norm: Gradient clipping norm
+            use_directional_loss: Whether to use directional loss instead of MSE
+            directional_loss_config: Configuration for directional loss
         """
         self.sequence_length = sequence_length
         self.hidden_size = hidden_size
@@ -89,104 +202,121 @@ class LSTMStockPredictor:
         self.dropout = dropout
         self.learning_rate = learning_rate
         self.model_dir = model_dir
+        self.bidirectional = bidirectional
+        self.use_layer_norm = use_layer_norm
+        self.use_residual = use_residual
+        self.weight_decay = weight_decay
+        self.gradient_clip_norm = gradient_clip_norm
+
+        self.use_directional_loss = use_directional_loss
+        self.directional_loss_config = directional_loss_config or {
+            'loss_type': 'standard',
+            'price_weight': 0.7,
+            'direction_weight': 0.3
+        }
         
-        # Create model directory if it doesn't exist
+        # Create model directory
         os.makedirs(model_dir, exist_ok=True)
         
-        # Device configuration (GPU if available)
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        print(f"Using device: {self.device}")
-        
+        # Initialize components
         self.model = None
-        self.feature_scaler = MinMaxScaler()  # For features
-        self.target_scaler = MinMaxScaler()   # For target prices
-        self.feature_columns = []
+        self.feature_scaler = MinMaxScaler(feature_range=(0, 1))
+        self.target_scaler = MinMaxScaler(feature_range=(0, 1))
+        self.feature_columns = None
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
-        # Store validation data for metrics calculation
+        # Store validation data for metrics
         self.X_val = None
         self.y_val = None
-    
-    def prepare_sequences(self, df: pd.DataFrame, feature_cols: List[str]) -> Tuple[np.ndarray, np.ndarray]:
+        
+        print(f"Using device: {self.device}")
+        print(f"Enhanced LSTM features: bidirectional={bidirectional}, "
+              f"layer_norm={use_layer_norm}, residual={use_residual}")
+
+    def _create_sequences(self, data: np.ndarray, target: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Create sequences for LSTM training with proper scaling
+        Create sequences for LSTM training
         Args:
-            df: DataFrame with features
-            feature_cols: List of feature column names
+            data: Feature data
+            target: Target values
         Returns:
-            X: Input sequences (samples, sequence_length, features)
-            y: Target values (samples, 1) - SCALED
+            X, y arrays for LSTM training
         """
-        df_clean = df[feature_cols + ['target']].dropna()
-        
-        # Get features and targets
-        features = df_clean[feature_cols].values
-        targets = df_clean['target'].values.reshape(-1, 1)  # Reshape for scaler
-        
-        # Scale BOTH features and targets
-        features_scaled = self.feature_scaler.fit_transform(features)
-        targets_scaled = self.target_scaler.fit_transform(targets)  # CRITICAL: Scale targets!
-        
         X, y = [], []
         
-        # Create sequences
-        for i in range(len(features_scaled) - self.sequence_length):
-            X.append(features_scaled[i:i + self.sequence_length])
-            y.append(targets_scaled[i + self.sequence_length])  # Use SCALED target
+        for i in range(self.sequence_length, len(data)):
+            X.append(data[i - self.sequence_length:i])
+            y.append(target[i])
         
-        return np.array(X), np.array(y).flatten()  # Flatten y back to 1D
-    
+        return np.array(X), np.array(y)
+
     def train(self, df: pd.DataFrame, epochs: int = 100, batch_size: int = 32,
-              validation_sequences: int = 30, early_stopping_patience: int = 10,
-              use_validation: bool = True) -> dict:
+          validation_sequences: int = 50, early_stopping_patience: int = 15,
+          use_validation: bool = True, lr_patience: int = 7, lr_factor: float = 0.5,
+          min_lr: float = 1e-6) -> dict:
         """
-        Train the LSTM model with optimized validation strategy
-        Args:
-            df: DataFrame with stock data
-            epochs: Number of training epochs
-            batch_size: Batch size for training
-            validation_sequences: Number of sequences to use for validation (fixed, not percentage)
-            early_stopping_patience: Stop if validation doesn't improve for N epochs
-            use_validation: If False, train on all data (for production)
-        Returns:
-            Training history dictionary
+        Enhanced training with clean directional loss implementation
         """
-        # Create features
+        print(f"Training enhanced LSTM model...")
+        print(f"Dataset shape: {df.shape}")
+        
+        # Feature engineering
         feature_service = get_feature_service()
-        df_features, feature_cols = feature_service.prepare_for_lstm(
-            df,
-            feature_set=FeatureSet.ADVANCED  # LSTM uses advanced features
+        df_features, expected_feature_cols = feature_service.prepare_for_lstm(
+            df, feature_set=FeatureSet.ADVANCED
         )
+
+        # Check what features are actually available after dropna
+        df_clean = df_features[expected_feature_cols + ['Close']].dropna()
+        available_features = [col for col in expected_feature_cols if col in df_clean.columns]
         
-        # Store feature columns
-        self.feature_columns = feature_cols
+        # Store feature columns and original close prices
+        self.feature_columns = available_features
+        original_close_prices = df_clean['Close'].values
         
-        # Prepare sequences (with scaling applied internally)
-        X, y = self.prepare_sequences(df_features, self.feature_columns)
+        print(f"Expected features: {len(expected_feature_cols)}")
+        print(f"Available features: {len(available_features)}")
         
-        print(f"Prepared {len(X)} sequences of length {self.sequence_length}")
-        print(f"Feature dimension: {X.shape[2]}")
+        if len(df_clean) < self.sequence_length + 20:
+            raise ValueError(f"Insufficient data. Need at least {self.sequence_length + 20} rows")
         
-        # Split into train and validation
+        # Prepare features and target
+        features = df_clean[self.feature_columns].values
+        target = df_clean['Close'].values
+        
+        # Scale data
+        features_scaled = self.feature_scaler.fit_transform(features)
+        target_scaled = self.target_scaler.fit_transform(target.reshape(-1, 1)).flatten()
+        
+        # Create sequences
+        X, y = self._create_sequences(features_scaled, target_scaled)
+        print(f"Created {len(X)} sequences")
+
+        # Create mapping from sequence index to original data index
+        sequence_to_original_idx = []
+        for i in range(self.sequence_length, len(features_scaled)):
+            sequence_to_original_idx.append(i - 1)  # Index of the "current" day (last day in sequence)
+        
+        # Train/validation split
         if use_validation:
-            # Check if we have enough data
-            min_required = validation_sequences + 50  # Need at least 50 for training
-            if len(X) < min_required:
-                raise ValueError(
-                    f"Need at least {min_required} sequences for training with validation. "
-                    f"Got {len(X)}. Try reducing sequence_length or validation_sequences."
-                )
+            if len(X) < validation_sequences + 20:
+                raise ValueError(f"Not enough sequences for validation")
             
-            # Use last N sequences for validation (time-series safe)
             split_idx = len(X) - validation_sequences
             X_train, X_val = X[:split_idx], X[split_idx:]
             y_train, y_val = y[:split_idx], y[split_idx:]
             
+            # Split the sequence index mapping too
+            train_seq_indices = sequence_to_original_idx[:split_idx]
+            val_seq_indices = sequence_to_original_idx[split_idx:]
+            
             print(f"Training sequences: {len(X_train)}")
             print(f"Validation sequences: {len(X_val)}")
         else:
-            # Train on all data (production mode)
             X_train, X_val = X, None
             y_train, y_val = y, None
+            train_seq_indices = sequence_to_original_idx
+            val_seq_indices = None
             print(f"Training on all {len(X_train)} sequences (no validation)")
         
         # Convert to PyTorch tensors
@@ -196,98 +326,172 @@ class LSTMStockPredictor:
         if use_validation:
             X_val = torch.FloatTensor(X_val).to(self.device)
             y_val = torch.FloatTensor(y_val).unsqueeze(1).to(self.device)
-            
-            # Store for metrics calculation later
             self.X_val = X_val
             self.y_val = y_val
         
-        # Initialize model
+        # Initialize model, optimizer, scheduler, etc.
         input_size = X.shape[2]
         self.model = LSTMModel(
             input_size=input_size,
             hidden_size=self.hidden_size,
             num_layers=self.num_layers,
-            dropout=self.dropout
+            dropout=self.dropout,
+            bidirectional=self.bidirectional,
+            use_layer_norm=self.use_layer_norm,
+            use_residual=self.use_residual
         ).to(self.device)
         
-        # Loss and optimizer
-        criterion = nn.MSELoss()
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
+        optimizer = torch.optim.AdamW(
+            self.model.parameters(), 
+            lr=self.learning_rate,
+            weight_decay=self.weight_decay
+        )
+        
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min', factor=lr_factor, patience=lr_patience, min_lr=min_lr
+        )
+        
+        # Loss function
+        if self.use_directional_loss:
+            loss_config = self._filter_loss_config(self.directional_loss_config)
+            criterion = create_directional_loss(**loss_config)
+            print(f"Using directional loss: {self.directional_loss_config['loss_type']}")
+            print(f"Filtered config: {loss_config}")
+        else:
+            criterion = nn.MSELoss()
+            print("Using standard MSE loss")
+        
+        # Early stopping
+        early_stopping = EarlyStopping(
+            patience=early_stopping_patience,
+            min_delta=1e-6,
+            restore_best_weights=True,
+            monitor_train=True
+        )
         
         # Training history
         history = {
             'train_loss': [],
-            'val_loss': [] if use_validation else None,
-            'stopped_epoch': None
+            'val_loss': [],
+            'learning_rate': [],
+            'train_direction_accuracy': [],
+            'val_direction_accuracy': [],
+            'price_loss': [],
+            'direction_loss': []
         }
         
-        # Early stopping variables
-        best_val_loss = float('inf')
-        patience_counter = 0
-        best_model_state = None
+        print(f"Starting training for {epochs} epochs...")
         
-        # Training loop
-        self.model.train()
         for epoch in range(epochs):
-            # Mini-batch training
-            total_train_loss = 0
-            num_batches = 0
+            # Training phase
+            self.model.train()
+            epoch_losses = []
+            epoch_direction_acc = []
+            epoch_price_loss = []
+            epoch_direction_loss = []
             
             for i in range(0, len(X_train), batch_size):
                 batch_X = X_train[i:i + batch_size]
                 batch_y = y_train[i:i + batch_size]
                 
-                # Forward pass
-                outputs = self.model(batch_X)
-                loss = criterion(outputs, batch_y)
+                # Handle directional loss
+                if self.use_directional_loss:
+                    batch_prev_close_list = []
+                    for j in range(len(batch_X)):
+                        seq_idx = i + j
+                        if seq_idx < len(train_seq_indices):
+                            original_idx = train_seq_indices[seq_idx]
+                            original_close = original_close_prices[original_idx]
+                            # Scale to match target scaling
+                            scaled_close = self.target_scaler.transform([[original_close]])[0][0]
+                            batch_prev_close_list.append(scaled_close)
+                        else:
+                            # Should not happen, but fallback
+                            batch_prev_close_list.append(batch_y[j].item())
+                    
+                    batch_prev_close = torch.tensor(batch_prev_close_list, device=self.device).unsqueeze(1)
                 
-                # Backward pass and optimization
                 optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+                outputs = self.model(batch_X)
                 
-                total_train_loss += loss.item()
-                num_batches += 1
+                if self.use_directional_loss:
+                    loss, loss_components = criterion(outputs, batch_y, batch_prev_close)
+                    epoch_price_loss.append(loss_components['price_loss'])
+                    epoch_direction_loss.append(loss_components['direction_loss'])
+                    epoch_direction_acc.append(loss_components['direction_accuracy'])
+                else:
+                    loss = criterion(outputs, batch_y)
+                
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_norm)
+                optimizer.step()
+                epoch_losses.append(loss.item())
             
-            avg_train_loss = total_train_loss / num_batches
+            # Calculate epoch metrics
+            avg_train_loss = np.mean(epoch_losses)
             history['train_loss'].append(avg_train_loss)
             
-            # Validation and early stopping
+            if self.use_directional_loss:
+                history['train_direction_accuracy'].append(np.mean(epoch_direction_acc))
+                history['price_loss'].append(np.mean(epoch_price_loss))
+                history['direction_loss'].append(np.mean(epoch_direction_loss))
+            
+            # Validation phase
             if use_validation:
                 self.model.eval()
                 with torch.no_grad():
                     val_outputs = self.model(X_val)
-                    val_loss = criterion(val_outputs, y_val)
-                self.model.train()
+                    
+                    if self.use_directional_loss:
+                        # Apply same approach for validation
+                        val_prev_close_list = []
+                        for j in range(len(X_val)):
+                            if j < len(val_seq_indices):
+                                original_idx = val_seq_indices[j]
+                                original_close = original_close_prices[original_idx]
+                                scaled_close = self.target_scaler.transform([[original_close]])[0][0]
+                                val_prev_close_list.append(scaled_close)
+                            else:
+                                # Fallback
+                                val_prev_close_list.append(y_val[j].item())
+                        
+                        val_prev_close = torch.tensor(val_prev_close_list, device=self.device).unsqueeze(1)
+                        val_loss, val_loss_components = criterion(val_outputs, y_val, val_prev_close)
+                        history['val_direction_accuracy'].append(val_loss_components['direction_accuracy'])
+                    else:
+                        val_loss = criterion(val_outputs, y_val)
                 
                 history['val_loss'].append(val_loss.item())
+                scheduler.step(val_loss)
                 
                 # Early stopping check
-                if val_loss.item() < best_val_loss:
-                    best_val_loss = val_loss.item()
-                    patience_counter = 0
-                    best_model_state = self.model.state_dict().copy()
-                else:
-                    patience_counter += 1
-                
-                # Stop if patience exceeded
-                if patience_counter >= early_stopping_patience:
-                    print(f"\nEarly stopping at epoch {epoch + 1}")
-                    history['stopped_epoch'] = epoch + 1
+                if early_stopping(val_loss.item(), avg_train_loss, self.model):
+                    print(f"Early stopping triggered at epoch {epoch + 1}")
                     break
                 
-                if (epoch + 1) % 10 == 0:
-                    print(f"Epoch [{epoch+1}/{epochs}], Train: {avg_train_loss:.4f}, "
-                          f"Val: {val_loss.item():.4f}, Patience: {patience_counter}/{early_stopping_patience}")
+                # Progress reporting
+                if (epoch + 1) % 10 == 0 or epoch == 0:
+                    current_lr = optimizer.param_groups[0]['lr']
+                    print(f"Epoch {epoch + 1}/{epochs} - "
+                        f"Train Loss: {avg_train_loss:.6f} - "
+                        f"Val Loss: {val_loss.item():.6f} - "
+                        f"LR: {current_lr:.8f}")
+                    
+                    if self.use_directional_loss and len(epoch_direction_acc) > 0:
+                        print(f"  Train Dir Acc: {np.mean(epoch_direction_acc):.2f}% - "
+                            f"Val Dir Acc: {val_loss_components['direction_accuracy']:.2f}%")
             else:
-                # No validation - just print training loss
-                if (epoch + 1) % 10 == 0:
-                    print(f"Epoch [{epoch+1}/{epochs}], Train Loss: {avg_train_loss:.4f}")
-        
-        # Restore best model if using validation
-        if use_validation and best_model_state is not None:
-            self.model.load_state_dict(best_model_state)
-            print(f"Restored best model with val_loss: {best_val_loss:.4f}")
+                # No validation
+                scheduler.step(avg_train_loss)
+                
+                if (epoch + 1) % 10 == 0 or epoch == 0:
+                    current_lr = optimizer.param_groups[0]['lr']
+                    print(f"Epoch {epoch + 1}/{epochs} - "
+                        f"Train Loss: {avg_train_loss:.6f} - "
+                        f"LR: {current_lr:.8f}")
+            
+            # Track learning rate
+            history['learning_rate'].append(optimizer.param_groups[0]['lr'])
         
         print("Training completed!")
         return history
@@ -332,11 +536,6 @@ class LSTMStockPredictor:
     def predict(self, df: pd.DataFrame, last_sequence_only: bool = True) -> np.ndarray:
         """
         Make predictions using the trained model
-        Args:
-            df: DataFrame with stock data
-            last_sequence_only: If True, predict only for the last sequence
-        Returns:
-            Predictions array (in ACTUAL PRICE scale, not scaled!)
         """
         if self.model is None:
             raise ValueError("Model not trained. Call train() first.")
@@ -355,8 +554,7 @@ class LSTMStockPredictor:
             raise ValueError(
                 f"Insufficient data after feature engineering. "
                 f"Need at least {self.sequence_length} data points, "
-                f"but only have {len(df_clean)} after removing NaN values. "
-                f"Try using more historical data (at least {self.sequence_length + 30} days recommended)."
+                f"but only have {len(df_clean)} after removing NaN values."
             )
         
         # Normalize features using fitted scaler
@@ -388,23 +586,16 @@ class LSTMStockPredictor:
         with torch.no_grad():
             predictions_scaled = self.model(X_tensor)
         
-        # Convert to numpy (still in SCALED space [0, 1])
+        # Convert to numpy and inverse transform
         predictions_scaled = predictions_scaled.cpu().numpy()
-        
-        # CRITICAL: Inverse transform to get ACTUAL PRICES
         predictions = self.target_scaler.inverse_transform(predictions_scaled)
         
         return predictions
     
     def save_model(self, ticker: str, metadata: Optional[dict] = None):
-        """
-        Save model weights and configuration
-        Args:
-            ticker: Stock ticker symbol
-            metadata: Additional metadata to save
-        """
+        """Save model weights and configuration"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        model_name = f"lstm_{ticker}_{timestamp}"
+        model_name = f"enhanced_lstm_{ticker}_{timestamp}"
         
         save_path = os.path.join(self.model_dir, model_name)
         os.makedirs(save_path, exist_ok=True)
@@ -419,10 +610,15 @@ class LSTMStockPredictor:
             'hidden_size': self.hidden_size,
             'num_layers': self.num_layers,
             'dropout': self.dropout,
+            'bidirectional': self.bidirectional,
+            'use_layer_norm': self.use_layer_norm,
+            'use_residual': self.use_residual,
             'feature_columns': self.feature_columns,
             'ticker': ticker,
             'timestamp': timestamp,
-            'device': str(self.device)
+            'device': str(self.device),
+            'weight_decay': self.weight_decay,
+            'gradient_clip_norm': self.gradient_clip_norm
         }
         
         if metadata:
@@ -430,100 +626,74 @@ class LSTMStockPredictor:
         
         config_path = os.path.join(save_path, "config.json")
         with open(config_path, 'w') as f:
-            json.dump(config, f, indent=2)
+            json.dump(config, f, indent=4)
         
-        # Save BOTH scalers
-        import joblib
-        feature_scaler_path = os.path.join(save_path, "feature_scaler.pkl")
-        joblib.dump(self.feature_scaler, feature_scaler_path)
+        # Save scalers
+        scaler_data = {
+            'feature_scaler_data_min_': self.feature_scaler.data_min_.tolist(),
+            'feature_scaler_data_max_': self.feature_scaler.data_max_.tolist(),
+            'feature_scaler_data_range_': self.feature_scaler.data_range_.tolist(),
+            'target_scaler_data_min_': self.target_scaler.data_min_.tolist(),
+            'target_scaler_data_max_': self.target_scaler.data_max_.tolist(),
+            'target_scaler_data_range_': self.target_scaler.data_range_.tolist(),
+        }
         
-        target_scaler_path = os.path.join(save_path, "target_scaler.pkl")
-        joblib.dump(self.target_scaler, target_scaler_path)
+        scaler_path = os.path.join(save_path, "scalers.json")
+        with open(scaler_path, 'w') as f:
+            json.dump(scaler_data, f, indent=4)
         
-        print(f"Model saved to {save_path}")
+        print(f"Enhanced model saved to: {save_path}")
         return save_path
     
-    def load_model(self, model_path: str):
+    def _filter_loss_config(self, config: dict) -> dict:
         """
-        Load model weights and configuration
-        Args:
-            model_path: Path to saved model directory
+        Filter loss configuration parameters based on loss type to avoid unexpected arguments
         """
-        # Load configuration
-        config_path = os.path.join(model_path, "config.json")
-        with open(config_path, 'r') as f:
-            config = json.load(f)
+        loss_type = config.get('loss_type', 'standard')
         
-        self.sequence_length = config['sequence_length']
-        self.hidden_size = config['hidden_size']
-        self.num_layers = config['num_layers']
-        self.dropout = config['dropout']
-        self.feature_columns = config['feature_columns']
+        # Base parameters that all losses accept
+        base_params = {
+            'loss_type': loss_type
+        }
         
-        # Load BOTH scalers
-        import joblib
-        feature_scaler_path = os.path.join(model_path, "feature_scaler.pkl")
-        self.feature_scaler = joblib.load(feature_scaler_path)
+        if loss_type == 'standard':
+            # DirectionalLoss parameters
+            allowed_params = ['price_weight', 'direction_weight', 'price_loss_type', 'direction_threshold']
+            filtered_config = base_params.copy()
+            for param in allowed_params:
+                if param in config:
+                    filtered_config[param] = config[param]
+            return filtered_config
         
-        target_scaler_path = os.path.join(model_path, "target_scaler.pkl")
-        self.target_scaler = joblib.load(target_scaler_path)
+        elif loss_type == 'focal':
+            # FocalDirectionalLoss parameters
+            allowed_params = ['price_weight', 'direction_weight', 'focal_alpha', 'focal_gamma']
+            filtered_config = base_params.copy()
+            for param in allowed_params:
+                if param in config:
+                    filtered_config[param] = config[param]
+            return filtered_config
         
-        # Initialize and load model
-        input_size = len(self.feature_columns)
-        self.model = LSTMModel(
-            input_size=input_size,
-            hidden_size=self.hidden_size,
-            num_layers=self.num_layers,
-            dropout=self.dropout
-        ).to(self.device)
+        elif loss_type == 'ranking':
+            # RankingDirectionalLoss parameters
+            allowed_params = ['price_weight', 'ranking_weight']
+            filtered_config = base_params.copy()
+            for param in allowed_params:
+                if param in config:
+                    filtered_config[param] = config[param]
+            return filtered_config
         
-        model_file = os.path.join(model_path, "model.pth")
-        self.model.load_state_dict(torch.load(model_file, map_location=self.device))
-        self.model.eval()
+        elif loss_type == 'adaptive':
+            # AdaptiveDirectionalLoss parameters
+            allowed_params = ['initial_price_weight', 'target_direction_accuracy', 'adaptation_rate']
+            filtered_config = base_params.copy()
+            for param in allowed_params:
+                if param in config:
+                    filtered_config[param] = config[param]
+            return filtered_config
         
-        print(f"Model loaded from {model_path}")
-
-
-# Example usage
-if __name__ == "__main__":
-    import yfinance as yf
+        else:
+            # Fallback to base parameters
+            print(f"Warning: Unknown loss type '{loss_type}', using base parameters only")
+            return base_params
     
-    # Download sample data
-    ticker = "AAPL"
-    df = yf.download(ticker, start="2020-01-01", end="2024-01-01")
-    
-    # Initialize predictor
-    predictor = LSTMStockPredictor(
-        sequence_length=20,  # Reduced for less data requirements
-        hidden_size=64,
-        num_layers=2,
-        dropout=0.2,
-        learning_rate=0.001,
-        model_dir='lstm_models'
-    )
-    
-    # Train model with early stopping
-    history = predictor.train(
-        df, 
-        epochs=100, 
-        batch_size=32,
-        validation_sequences=30,  # Fixed number, not percentage
-        early_stopping_patience=10,
-        use_validation=True
-    )
-    
-    # Make prediction for next day
-    next_day_pred = predictor.predict(df, last_sequence_only=True)
-    print(f"\nPredicted next day close price: ${next_day_pred[0][0]:.2f}")
-    print(f"Last actual close price: ${df['Close'].iloc[-1]:.2f}")
-    
-    # Get validation metrics
-    metrics = predictor.get_validation_metrics()
-    print(f"\nValidation Metrics:")
-    print(f"  RMSE: ${metrics['rmse']:.2f}")
-    print(f"  MAE: ${metrics['mae']:.2f}")
-    print(f"  R²: {metrics['r2']:.4f}")
-    print(f"  MAPE: {metrics['mape']:.2f}%")
-    
-    # Save model
-    predictor.save_model(ticker, metadata={'training_samples': len(df)})
