@@ -1,0 +1,55 @@
+{
+  "_comment": "QUICK TUNE - Only most important parameters",
+  "_description": "Use this for fast tuning (Grid search: ~324 configs)",
+  "_calculation": "3 * 3 * 2 * 3 * 3 * 1 * 2 * 1 * 2 = 324 configs total",
+  
+  "sequence_length": {
+    "values": [5, 10, 20],
+    "type": "categorical"
+  },
+  
+  "hidden_size": {
+    "values": [64, 128, 256],
+    "type": "categorical"
+  },
+  
+  "num_layers": {
+    "values": [2, 3],
+    "type": "categorical"
+  },
+  
+  "dropout": {
+    "values": [0.1, 0.15, 0.2],
+    "type": "categorical"
+  },
+  
+  "learning_rate": {
+    "values": [0.0005, 0.001, 0.002],
+    "type": "categorical"
+  },
+  
+  "bidirectional": {
+    "values": [false, true],
+    "type": "categorical"
+  },
+  
+  "use_layer_norm": {
+    "values": [false, true],
+    "type": "categorical"
+  },
+  
+  "use_residual": {
+    "values": [false, true],
+    "type": "categorical"
+  },
+  
+  "weight_decay": {
+    "values": [0.0001, 0.001],
+    "type": "categorical"
+  },
+  
+  "gradient_clip_norm": {
+    "values": [1.0],
+    "type": "categorical"
+  }
+}

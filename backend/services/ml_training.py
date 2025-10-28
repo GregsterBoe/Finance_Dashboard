@@ -80,47 +80,54 @@ def train_lstm_model(df: pd.DataFrame, config: TrainingConfig):
         }
     )
     
-    # Train the model with enhanced parameters
+    # Train model (now learns to predict returns)
     history = predictor.train(
-        df, 
+        df,
         epochs=config.model_spec.epochs,
         batch_size=config.model_spec.batch_size,
         validation_sequences=config.model_spec.validation_sequences,
         early_stopping_patience=config.model_spec.early_stopping_patience,
         use_validation=config.model_spec.use_validation,
-        
-        # NEW: Add these if they exist in ModelConfig
         lr_patience=getattr(config.model_spec, 'lr_patience', 7),
         lr_factor=getattr(config.model_spec, 'lr_factor', 0.5),
         min_lr=getattr(config.model_spec, 'min_lr', 1e-6)
     )
     
-    # Make prediction for next day
-    next_day_pred = predictor.predict(df, last_sequence_only=True)
-    next_day_prediction = next_day_pred[0][0]
-    
-    # Get metrics from training history or validation
-    if config.model_spec.use_validation:
-        validation_metrics = predictor.get_validation_metrics()
-        rmse = validation_metrics['rmse']
-        mae = validation_metrics['mae']
-        r2 = validation_metrics['r2']
-        mape = validation_metrics['mape']
+    # Get validation metrics (return-based)
+    if predictor.X_val is not None:
+        val_metrics = predictor.get_validation_metrics()
+        rmse = val_metrics['rmse']
+        mae = val_metrics['mae']
+        r2 = val_metrics['r2_score']
+        mape = val_metrics['mape']
+        direction_accuracy = val_metrics.get('direction_accuracy', None)
     else:
-        # Fallback to final training loss
-        final_loss = history['train_loss'][-1]
-        rmse = np.sqrt(final_loss)
-        mae = final_loss
+        # Training metrics from last epoch
+        rmse = history['train_loss'][-1] if 'train_loss' in history else 0.0
+        mae = 0.0
         r2 = 0.0
         mape = 0.0
+        direction_accuracy = history.get('train_direction_accuracy', [None])[-1]
+    
+    # Make next day prediction (returns both return and price)
+    prediction_result = predictor.predict_with_price_conversion(df, last_sequence_only=True)
+    
+    predicted_return = prediction_result['predicted_return']
+    predicted_price = prediction_result['predicted_price']
+    last_close = prediction_result['last_close']
+    return_pct = prediction_result['return_pct']
+    
+    # Calculate price change metrics (for backward compatibility)
+    predicted_change = predicted_price - last_close
+    predicted_change_pct = (predicted_change / last_close) * 100
     
     # Save model
     model_path = predictor.save_model(
         config.ticker, 
         metadata={
             'training_samples': len(df),
-            'use_directional_loss': predictor.use_directional_loss,
-            'directional_loss_config': predictor.directional_loss_config
+            'predicts_returns': True,  # NEW: Flag to indicate this model predicts returns
+            'direction_accuracy': direction_accuracy
         }
     )
     
@@ -131,55 +138,37 @@ def train_lstm_model(df: pd.DataFrame, config: TrainingConfig):
         "days": len(df)
     }
     
-    # Save training result
+    # Create metrics object with return-specific info
     training_metrics = TrainingMetrics(
         rmse=round(rmse, 4),
         mae=round(mae, 4),
         r2_score=round(r2, 4),
         mape=round(mape, 4),
         training_samples=len(df),
-        # NEW: Add directional accuracy if available
-        directional_accuracy=round(history.get('train_direction_accuracy', [0])[-1], 2) if history.get('train_direction_accuracy') else None
+        direction_accuracy=round(direction_accuracy, 2) if direction_accuracy is not None else None,
+        metric_type='returns'  # NEW: Indicate these are return-based metrics
     )
     
-    # Get last close price for prediction
-    last_close = df['Close'].iloc[-1]
-    predicted_change = next_day_prediction - last_close
-    predicted_change_pct = (predicted_change / last_close) * 100
-    
-    # Generate run ID and prediction date
-    run_id = generate_run_id(config.ticker, "training")
+    # Get prediction date
     last_date = df.index[-1]
     prediction_date = last_date + timedelta(days=1)
     while prediction_date.weekday() >= 5:
         prediction_date += timedelta(days=1)
     
+    # Create prediction object with both price and return info
     prediction = PredictionResult(
         date=prediction_date.strftime("%Y-%m-%d"),
-        predicted_close=round(next_day_prediction, 2),
+        predicted_close=round(predicted_price, 2),
         last_close=round(last_close, 2),
         predicted_change=round(predicted_change, 2),
-        predicted_change_pct=round(predicted_change_pct, 2)
+        predicted_change_pct=round(predicted_change_pct, 2),
+        # NEW: Return metrics
+        predicted_return=round(predicted_return, 6),
+        predicted_return_pct=round(return_pct, 2)
     )
     
-    # Save result
-    training_result = TrainingResult(
-        run_id=run_id,
-        run_type="training",
-        timestamp=datetime.now().isoformat(),
-        ticker=config.ticker,
-        model_spec=config.model_spec,
-        training_period=training_period,
-        metrics=training_metrics,
-        prediction=prediction,
-        feature_importance={},  # LSTM doesn't have traditional feature importance
-        notes=config.notes
-    )
-    
-    results_manager = ResultsManager()
-    results_manager.save_result(training_result)
+    return predictor, rmse, mae, r2, mape, predicted_price, model_path
 
-    return predictor, rmse, mae, r2, mape, next_day_prediction, model_path
 
 def create_model(config: ModelConfig):
     """Create a model instance based on configuration"""

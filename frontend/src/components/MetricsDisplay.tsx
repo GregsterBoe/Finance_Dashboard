@@ -1,4 +1,8 @@
 // frontend/src/components/MetricsDisplay.tsx
+/**
+ * Enhanced MetricsDisplay component for both price-based and return-based predictions
+ * Maintains current styling while adding support for direction accuracy and return metrics
+ */
 import type { TrainingMetrics } from '../types/metrics';
 import { METRIC_CONFIGS, getOrderedMetrics } from '../types/metrics';
 
@@ -12,7 +16,7 @@ interface MetricsDisplayProps {
 
 export default function MetricsDisplay({
   metrics,
-  title = "Metrics",
+  title = "Training Metrics",
   includeDirectional = true,
   layout = 'grid',
   showDescriptions = false
@@ -24,6 +28,9 @@ export default function MetricsDisplay({
     const value = metrics[key];
     return value !== undefined && value !== null;
   });
+
+  // Check if this is a return-based model
+  const isReturnBased = metrics.metric_type === 'returns';
 
   if (layout === 'list') {
     return (
@@ -47,11 +54,20 @@ export default function MetricsDisplay({
             </div>
           );
         })}
+        
+        {/* Return-based indicator */}
+        {isReturnBased && (
+          <div className="mt-4 p-3 bg-blue-50 rounded border border-blue-200">
+            <p className="text-xs text-blue-700">
+              <span className="font-semibold">Note:</span> Metrics calculated on returns (not absolute prices)
+            </p>
+          </div>
+        )}
       </div>
     );
   }
 
-  // Grid layout (default)
+  // Grid layout (default) - matches your current style
   return (
     <div>
       {title && <h3 className="text-lg font-semibold mb-4">{title}</h3>}
@@ -60,14 +76,18 @@ export default function MetricsDisplay({
           const config = METRIC_CONFIGS[key];
           const value = metrics[key];
           
+          // Special styling for direction accuracy
+          const isDirectionalAccuracy = key === 'direction_accuracy';
+          const bgClass = isDirectionalAccuracy ? 'bg-green-50 border border-green-200' : config.colorClass;
+          
           return (
             <div
               key={key}
-              className={`p-4 rounded-lg shadow-sm ${config.colorClass}`}
+              className={`p-4 rounded-lg shadow-sm ${bgClass}`}
               title={showDescriptions ? config.description : undefined}
             >
               <p className="text-sm text-gray-600 mb-1">{config.label}</p>
-              <p className="text-lg font-bold">
+              <p className={`text-lg font-bold ${isDirectionalAccuracy ? 'text-green-700' : ''}`}>
                 {config.format(value as number)}
               </p>
               {showDescriptions && (
@@ -77,6 +97,21 @@ export default function MetricsDisplay({
           );
         })}
       </div>
+      
+      {/* Return-based indicator - only show for grid layout */}
+      {isReturnBased && (
+        <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+          <p className="text-xs text-blue-700 flex items-center">
+            <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+            </svg>
+            <span>
+              <span className="font-semibold">Return-based metrics:</span> RMSE/MAE calculated on returns (not absolute prices). 
+              Focus on Direction Accuracy for trading insights.
+            </span>
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -99,12 +134,17 @@ export function MetricsInline({ metrics }: { metrics: TrainingMetrics }) {
         <span className="text-gray-600">R²:</span>{' '}
         <span className="font-semibold">{METRIC_CONFIGS.r2_score.format(metrics.r2_score)}</span>
       </span>
-      {metrics.directional_accuracy !== undefined && (
+      {metrics.direction_accuracy !== undefined && (
         <span>
           <span className="text-gray-600">Dir. Acc:</span>{' '}
-          <span className="font-semibold">
-            {METRIC_CONFIGS.directional_accuracy.format(metrics.directional_accuracy)}
+          <span className="font-semibold text-green-600">
+            {METRIC_CONFIGS.direction_accuracy.format(metrics.direction_accuracy)}
           </span>
+        </span>
+      )}
+      {metrics.metric_type === 'returns' && (
+        <span className="text-xs text-blue-600 italic ml-2">
+          (return-based)
         </span>
       )}
     </div>

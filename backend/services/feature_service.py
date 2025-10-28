@@ -19,6 +19,7 @@ class FeatureSet(Enum):
     BASIC = "basic"           # Basic price and volume features
     STANDARD = "standard"     # Standard technical indicators
     ADVANCED = "advanced"     # Advanced features including RSI, MACD, etc.
+    LSTM = "lstm"             # Features specifically for LSTM models
 
 
 class FeatureService:
@@ -57,8 +58,9 @@ class FeatureService:
         """
         df = df.copy()
         
-        # BASIC FEATURES - Always included
-        df = self._create_basic_features(df)
+        # BASIC FEATURES - Always included except lstm
+        if feature_set in [FeatureSet.BASIC, FeatureSet.STANDARD, FeatureSet.ADVANCED]:
+            df = self._create_basic_features(df)
         
         # STANDARD FEATURES - Technical indicators
         if feature_set in [FeatureSet.STANDARD, FeatureSet.ADVANCED]:
@@ -67,10 +69,20 @@ class FeatureService:
         # ADVANCED FEATURES - Additional indicators
         if feature_set == FeatureSet.ADVANCED:
             df = self._create_advanced_features(df)
+
+        if feature_set == FeatureSet.LSTM:
+            # For LSTM, use the specialized feature creation
+            df = self._create_lstm_features(df)
         
-        # Target variable (next day's closing price)
+        # Target variable
         if include_target:
-            df['target'] = df['Close'].shift(-1)
+            if feature_set == FeatureSet.LSTM:
+                # For LSTM: predict log returns (more stable)
+                df['target'] = np.log(df['Close'].shift(-1) / (df['Close'] + 1e-8))
+                df['target'] = df['target'].fillna(0)
+            else:
+                # For traditional ML: still predict absolute price
+                df['target'] = df['Close'].shift(-1)
         
         return df
     
@@ -188,6 +200,50 @@ class FeatureService:
         
         return df
     
+    def _create_lstm_features(self, df: pd.DataFrame, volume_window: int = 20) -> pd.DataFrame:
+        """
+        Creates raw, sequential features best suited for an LSTM.
+
+        Instead of pre-calculating indicators (like RSI, MACD), this provides
+        daily "state" features. The LSTM will learn the patterns from the
+        sequence of these features.
+
+        Args:
+            df: DataFrame with features (expects 'Open', 'High', 'Low', 'Close', 'Volume')
+            volume_window: Rolling window for calculating volume z-score
+
+        Returns:
+            DataFrame with LSTM-specific features added
+        """
+        # --- 1. Price Change ---
+        # Log returns are generally preferred as they are more stationary
+        df['log_returns'] = np.log(df['Close'] / (df['Close'].shift(1) + 1e-8))
+        
+        # Fill initial NaN with 0
+        df['log_returns'] = df['log_returns'].fillna(0)
+
+        # --- 2. Intra-day Momentum ---
+        # Captures the momentum from market open to close
+        df['close_open_ratio'] = df['Close'] / (df['Open'] + 1e-8)
+
+        # --- 3. Intra-day Volatility ---
+        # Captures the range of price movement during the day
+        df['high_low_ratio'] = df['High'] / (df['Low'] + 1e-8)
+
+        # --- 4. Normalized Volume ---
+        # Volume as a Z-score to see how it compares to its recent average
+        vol_mean = df['Volume'].rolling(window=volume_window).mean()
+        vol_std = df['Volume'].rolling(window=volume_window).std()
+        df['volume_zscore'] = (df['Volume'] - vol_mean) / (vol_std + 1e-8)
+        
+        # Fill initial NaN values with 0 (neutral z-score)
+        df['volume_zscore'] = df['volume_zscore'].fillna(0)
+
+        # Note: We do not dropna() here. The LSTMStockPredictor's train
+        # method handles that, which is the correct place.
+
+        return df
+    
     def get_feature_columns(self, df: pd.DataFrame) -> List[str]:
         """
         Get list of feature columns (excluding raw OHLCV and target).
@@ -198,7 +254,7 @@ class FeatureService:
         Returns:
             List of feature column names
         """
-        exclude_cols = self.raw_columns + ['target']
+        exclude_cols = self.raw_columns + ['target', 'target_return']
         feature_cols = [col for col in df.columns if col not in exclude_cols]
         return feature_cols
     
@@ -243,13 +299,14 @@ class FeatureService:
     def prepare_for_lstm(
         self,
         df: pd.DataFrame,
-        feature_set: FeatureSet = FeatureSet.ADVANCED
+        feature_set: FeatureSet = FeatureSet.LSTM,
+        volume_window: int = 20
     ) -> Tuple[pd.DataFrame, List[str]]:
         """
         Prepare data for LSTM models.
         
         This method:
-        1. Creates features (typically with ADVANCED set for LSTM)
+        1. Creates features (using LSTM-specific features by default)
         2. Returns feature DataFrame with target
         3. Returns feature column names
         
@@ -257,19 +314,34 @@ class FeatureService:
         
         Args:
             df: Raw OHLCV DataFrame
-            feature_set: Which feature set to use (default ADVANCED for LSTM)
+            feature_set: Which feature set to use (default LSTM for LSTM models)
+            volume_window: Window size for volume z-score calculation
         
         Returns:
             df_features: DataFrame with features and target
             feature_cols: List of feature column names
         """
-        # Create features (LSTM typically uses more advanced features)
+        # Create features (LSTM uses specialized features by default)
         df_features = self.create_features(df, feature_set=feature_set, include_target=True)
         
         # Get feature columns
         feature_cols = self.get_feature_columns(df_features)
         
         return df_features, feature_cols
+    
+    def get_lstm_feature_columns(self) -> List[str]:
+        """
+        Get the specific feature columns used for LSTM models.
+        
+        Returns:
+            List of LSTM feature column names
+        """
+        return [
+            'log_returns', 
+            'close_open_ratio', 
+            'high_low_ratio', 
+            'volume_zscore'
+        ]
     
     def get_feature_info(self, feature_set: FeatureSet = FeatureSet.STANDARD) -> dict:
         """
@@ -316,6 +388,16 @@ class FeatureService:
                 ],
                 "additional_count": 9,
                 "total_count": 27
+            },
+            FeatureSet.LSTM: {
+                "description": "Raw sequential features optimized for LSTM models",
+                "features": [
+                    "log_returns",
+                    "close_open_ratio",
+                    "high_low_ratio",
+                    "volume_zscore"
+                ],
+                "count": 4
             }
         }
         
