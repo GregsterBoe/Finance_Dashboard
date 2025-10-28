@@ -95,26 +95,45 @@ class LSTMModel(nn.Module):
         h0 = torch.zeros(self.num_layers * num_directions, batch_size, self.hidden_size).to(x.device)
         c0 = torch.zeros(self.num_layers * num_directions, batch_size, self.hidden_size).to(x.device)
         
-        # LSTM forward pass
-        lstm_out, _ = self.lstm(x, (h0, c0))
+        lstm_out, (h_n, c_n) = self.lstm(x, (h0, c0))
+    
+        # --- FIX 2: Correctly combine final states ---
+        if self.bidirectional:
+            # h_n contains all layers' final states
+            # We want the last layer's final forward state (index -2)
+            # and the last layer's final backward state (index -1)
+            last_layer_h_n_forward = h_n[-2, :, :]
+            last_layer_h_n_backward = h_n[-1, :, :]
+            # Concatenate them to get the full bidirectional representation
+            lstm_out_combined = torch.cat((last_layer_h_n_forward, last_layer_h_n_backward), dim=1)
+        else:
+            # For a unidirectional LSTM, your original logic was fine.
+            # We can get this from h_n as well.
+            lstm_out_combined = h_n[-1, :, :]
+            # Or, to be closer to your original:
+            # lstm_out_combined = lstm_out[:, -1, :]
         
-        # Take output from last time step
-        lstm_out = lstm_out[:, -1, :]
-        
-        # Apply layer normalization
+        # Apply layer normalization (using the new combined output)
         if self.use_layer_norm:
-            lstm_out = self.layer_norm(lstm_out)
-        
-        # Residual connection (project last input if needed)
+            # Use lstm_out_combined instead of lstm_out
+            lstm_out_norm = self.layer_norm(lstm_out_combined)
+        else:
+            lstm_out_norm = lstm_out_combined
+
+        # Residual connection
         if self.use_residual:
-            residual = x[:, -1, :]  # Last time step of input
+            residual = x[:, -1, :]
             if self.residual_proj is not None:
                 residual = self.residual_proj(residual)
-            lstm_out = lstm_out + residual
+            # Add residual to the normalized LSTM output
+            lstm_out_final = lstm_out_norm + residual
+        else:
+            lstm_out_final = lstm_out_norm
         
-        # First FC layer with dropout
-        out = self.dropout(lstm_out)
-        out = self.fc1(out)
+        # --- FIX 3: (See below) Remove one dropout layer ---
+        # First FC layer
+        # out = self.dropout(lstm_out_final) # <-- Suggest removing this one
+        out = self.fc1(lstm_out_final)
         out = self.relu(out)
         
         # Layer normalization for FC
@@ -251,7 +270,7 @@ class LSTMStockPredictor:
         return np.array(X), np.array(y)
 
     def train(self, df: pd.DataFrame, epochs: int = 100, batch_size: int = 32,
-          validation_sequences: int = 50, early_stopping_patience: int = 15,
+          validation_sequences: int = 50, early_stopping_patience: int = 25,
           use_validation: bool = True, lr_patience: int = 7, lr_factor: float = 0.5,
           min_lr: float = 1e-6) -> dict:
         """
@@ -263,16 +282,17 @@ class LSTMStockPredictor:
         # Feature engineering
         feature_service = get_feature_service()
         df_features, expected_feature_cols = feature_service.prepare_for_lstm(
-            df, feature_set=FeatureSet.ADVANCED
+            df, feature_set=FeatureSet.LSTM
         )
 
         # Check what features are actually available after dropna
-        df_clean = df_features[expected_feature_cols + ['Close']].dropna()
+        df_clean = df_features[expected_feature_cols + ['Close', 'target']].dropna()
         available_features = [col for col in expected_feature_cols if col in df_clean.columns]
-        
-        # Store feature columns and original close prices
+
+          # Prepare features and target
         self.feature_columns = available_features
-        original_close_prices = df_clean['Close'].values
+        original_close_prices = df_clean['Close'].values # This is still needed for directional loss
+        
         
         print(f"Expected features: {len(expected_feature_cols)}")
         print(f"Available features: {len(available_features)}")
@@ -280,9 +300,11 @@ class LSTMStockPredictor:
         if len(df_clean) < self.sequence_length + 20:
             raise ValueError(f"Insufficient data. Need at least {self.sequence_length + 20} rows")
         
-        # Prepare features and target
+      
+
+        # Assign features and the CORRECT target
         features = df_clean[self.feature_columns].values
-        target = df_clean['Close'].values
+        target = df_clean['target'].values
         
         # Scale data
         features_scaled = self.feature_scaler.fit_transform(features)
@@ -497,7 +519,7 @@ class LSTMStockPredictor:
         return history
     
     def get_validation_metrics(self) -> dict:
-        """Calculate validation metrics using the stored validation data"""
+        """Calculate validation metrics for return-based predictions"""
         if self.X_val is None or self.y_val is None:
             raise ValueError("No validation data available. Train with use_validation=True first.")
         
@@ -513,29 +535,60 @@ class LSTMStockPredictor:
         y_true_scaled = self.y_val.cpu().numpy().flatten()
         y_pred_scaled = val_predictions_scaled.cpu().numpy().flatten()
         
-        # CRITICAL: Inverse transform to get ACTUAL PRICES
-        y_true = self.target_scaler.inverse_transform(y_true_scaled.reshape(-1, 1)).flatten()
-        y_pred = self.target_scaler.inverse_transform(y_pred_scaled.reshape(-1, 1)).flatten()
+        # CRITICAL: Inverse transform to get ACTUAL RETURNS (not prices!)
+        y_true_returns = self.target_scaler.inverse_transform(y_true_scaled.reshape(-1, 1)).flatten()
+        y_pred_returns = self.target_scaler.inverse_transform(y_pred_scaled.reshape(-1, 1)).flatten()
         
-        # NEW: Use unified metrics service
-        metrics_service = get_metrics_service()
-        metrics = metrics_service.calculate_from_model_output(
-            y_true=y_true,
-            y_pred=y_pred,
-            training_samples=len(y_true)
-        )
+        # Calculate metrics on returns
+        from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
         
-        # Return as dict for backward compatibility
+        rmse_returns = np.sqrt(mean_squared_error(y_true_returns, y_pred_returns))
+        mae_returns = mean_absolute_error(y_true_returns, y_pred_returns)
+        r2_returns = r2_score(y_true_returns, y_pred_returns)
+        
+        # Calculate directional accuracy (did we predict the right direction?)
+        correct_direction = np.sum((y_true_returns > 0) == (y_pred_returns > 0))
+        direction_accuracy = (correct_direction / len(y_true_returns)) * 100
+        
+        # MAPE on returns (absolute percentage error)
+        # Be careful with MAPE when returns can be near zero
+        non_zero_mask = np.abs(y_true_returns) > 1e-6
+        if np.any(non_zero_mask):
+            mape_returns = np.mean(np.abs((y_true_returns[non_zero_mask] - y_pred_returns[non_zero_mask]) / 
+                                        y_true_returns[non_zero_mask])) * 100
+        else:
+            mape_returns = 0.0
+        
         return {
-            'rmse': metrics.rmse,
-            'mae': metrics.mae,
-            'r2': metrics.r2_score,
-            'mape': metrics.mape
+            'rmse': rmse_returns,
+            'mae': mae_returns,
+            'r2_score': r2_returns,
+            'mape': mape_returns,
+            'direction_accuracy': direction_accuracy,
+            'metric_type': 'returns'  # Flag to indicate these are return-based metrics
         }
     
     def predict(self, df: pd.DataFrame, last_sequence_only: bool = True) -> np.ndarray:
         """
-        Make predictions using the trained model
+        Original predict method - now returns PRICES for backward compatibility.
+        Internally predicts returns and converts to prices.
+        """
+        result = self.predict_with_price_conversion(df, last_sequence_only)
+        
+        if last_sequence_only:
+            return np.array([[result['predicted_price']]])
+        else:
+            return result['predicted_prices'].reshape(-1, 1)
+        
+    def predict_with_price_conversion(self, df: pd.DataFrame, last_sequence_only: bool = True) -> dict:
+        """
+        Make predictions and convert returns to actual prices.
+        
+        Returns:
+            dict with:
+                - predicted_returns: The raw return predictions (log returns)
+                - predicted_prices: Converted to actual price predictions
+                - last_close: The last known close price used for conversion
         """
         if self.model is None:
             raise ValueError("Model not trained. Call train() first.")
@@ -544,10 +597,10 @@ class LSTMStockPredictor:
         feature_service = get_feature_service()
         df_features, _ = feature_service.prepare_for_lstm(
             df,
-            feature_set=FeatureSet.ADVANCED
+            feature_set=FeatureSet.LSTM  # Changed from ADVANCED
         )
         
-        df_clean = df_features[self.feature_columns].dropna()
+        df_clean = df_features[self.feature_columns + ['Close']].dropna()
         
         # Check if we have enough data
         if len(df_clean) < self.sequence_length:
@@ -557,8 +610,11 @@ class LSTMStockPredictor:
                 f"but only have {len(df_clean)} after removing NaN values."
             )
         
+        # Get the last close price for conversion
+        last_close = df_clean['Close'].iloc[-1]
+        
         # Normalize features using fitted scaler
-        features_scaled = self.feature_scaler.transform(df_clean.values)
+        features_scaled = self.feature_scaler.transform(df_clean[self.feature_columns].values)
         
         if last_sequence_only:
             # Predict only for the last sequence
@@ -574,9 +630,13 @@ class LSTMStockPredictor:
                 )
             
             X = []
+            close_prices = []
             for i in range(num_sequences):
                 sequence = features_scaled[i:i + self.sequence_length]
                 X.append(sequence)
+                # Store the close price at the end of each sequence for conversion
+                close_prices.append(df_clean['Close'].iloc[i + self.sequence_length - 1])
+                
             X = np.array(X)
         
         # Convert to tensor and predict
@@ -586,11 +646,38 @@ class LSTMStockPredictor:
         with torch.no_grad():
             predictions_scaled = self.model(X_tensor)
         
-        # Convert to numpy and inverse transform
+        # Convert to numpy and inverse transform to get LOG RETURNS
         predictions_scaled = predictions_scaled.cpu().numpy()
-        predictions = self.target_scaler.inverse_transform(predictions_scaled)
+        predicted_returns = self.target_scaler.inverse_transform(predictions_scaled).flatten()
         
-        return predictions
+        # Convert log returns to actual prices
+        if last_sequence_only:
+            # predicted_return is a log return: log(price_tomorrow / price_today)
+            # To get price_tomorrow: price_today * exp(log_return)
+            predicted_price = last_close * np.exp(predicted_returns[0])
+            
+            return {
+                'predicted_return': predicted_returns[0],
+                'predicted_price': predicted_price,
+                'last_close': last_close,
+                'return_pct': (np.exp(predicted_returns[0]) - 1) * 100  # Convert to percentage
+            }
+        else:
+            # Multiple predictions
+            predicted_prices = []
+            for i, log_return in enumerate(predicted_returns):
+                if last_sequence_only:
+                    base_price = last_close
+                else:
+                    base_price = close_prices[i]
+                predicted_price = base_price * np.exp(log_return)
+                predicted_prices.append(predicted_price)
+            
+            return {
+                'predicted_returns': predicted_returns,
+                'predicted_prices': np.array(predicted_prices),
+                'base_close_prices': np.array(close_prices) if not last_sequence_only else last_close
+            }
     
     def save_model(self, ticker: str, metadata: Optional[dict] = None):
         """Save model weights and configuration"""

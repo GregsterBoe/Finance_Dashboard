@@ -53,9 +53,9 @@ class MetricsService:
         mape = float(np.mean(np.abs(errors / (np.abs(actual) + 1e-8))) * 100)
         
         # Directional accuracy (if we have sequential data)
-        directional_accuracy = None
+        direction_accuracy = None
         if len(actual) > 1:
-            directional_accuracy = MetricsService._calculate_directional_accuracy(
+            direction_accuracy = MetricsService._calculate_direction_accuracy(
                 actual, predicted
             )
         
@@ -65,11 +65,11 @@ class MetricsService:
             r2_score=round(r2, 4),
             mape=round(mape, 2),
             training_samples=training_samples,
-            directional_accuracy=round(directional_accuracy, 2) if directional_accuracy else None
+            direction_accuracy=round(direction_accuracy, 2) if direction_accuracy else None
         )
     
     @staticmethod
-    def _calculate_directional_accuracy(
+    def _calculate_direction_accuracy(
         actual: np.ndarray,
         predicted: np.ndarray,
         previous_close: np.ndarray = None
@@ -184,7 +184,7 @@ class MetricsService:
         Returns:
             Formatted string
         """
-        if metric_name in ['mape', 'directional_accuracy']:
+        if metric_name in ['mape', 'direction_accuracy']:
             return f"{value:.2f}%"
         elif metric_name in ['rmse', 'mae', 'r2_score']:
             return f"{value:.4f}"
@@ -201,7 +201,7 @@ class MetricsService:
             'mae': 'MAE',
             'mape': 'MAPE',
             'r2_score': 'R² Score',
-            'directional_accuracy': 'Directional Accuracy',
+            'direction_accuracy': 'Directional Accuracy',
             'training_samples': 'Training Samples'
         }
         return display_names.get(metric_name, metric_name.replace('_', ' ').title())

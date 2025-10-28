@@ -29,7 +29,7 @@ class ModelConfig(BaseModel):
     epochs: Optional[int] = Field(default=100, ge=10, le=500)
     batch_size: Optional[int] = Field(default=32, ge=8, le=128)
     validation_sequences: Optional[int] = Field(default=30, ge=10, le=100)
-    early_stopping_patience: Optional[int] = Field(default=10, ge=3, le=30)
+    early_stopping_patience: Optional[int] = Field(default=25, ge=3, le=30)
     use_validation: Optional[bool] = Field(default=True)
 
     # New enhancement parameters
@@ -63,21 +63,28 @@ class ModelConfig(BaseModel):
         use_enum_values = True
 
 class TrainingMetrics(BaseModel):
-    """Standard training metrics"""
+    """Updated training metrics to include return-specific metrics"""
     rmse: float
     mae: float
     r2_score: float
+    mape: float
     training_samples: int
-    mape: Optional[float] = None
-    directional_accuracy: Optional[float] = None
+    
+    # NEW: Return-specific metrics
+    direction_accuracy: Optional[float] = None  # Percentage of correct up/down predictions
+    metric_type: Optional[str] = None  # 'prices' or 'returns' to indicate what metrics represent
 
 class PredictionResult(BaseModel):
-    """Single prediction result"""
+    """Updated prediction result with both price and return metrics"""
     date: str
-    predicted_close: float
+    predicted_close: float  # Converted from return prediction
     last_close: float
-    predicted_change: float
-    predicted_change_pct: float
+    predicted_change: float  # predicted_close - last_close
+    predicted_change_pct: float  # (predicted_change / last_close) * 100
+    
+    # NEW: Return-based metrics
+    predicted_return: Optional[float] = None  # Log return prediction (e.g., 0.015)
+    predicted_return_pct: Optional[float] = None  # Simple return percentage (e.g., 1.51%)
 
 class TrainingResult(BaseModel):
     """Complete training result with metadata"""

@@ -1,0 +1,28 @@
+{
+  "_comment": "Fixed LSTM parameters that won't be tuned",
+  "_description": "These parameters stay constant during hyperparameter search",
+  
+  "model_dir": "models/tuned_lstm",
+  
+  "epochs": 100,
+  "batch_size": 32,
+  "validation_sequences": 50,
+  "use_validation": true,
+  "early_stopping_patience": 15,
+  "lr_patience": 10,
+  "lr_factor": 0.5,
+  "min_lr": 1e-6,
+  
+  "use_directional_loss": false,
+  "directional_loss_config": {
+    "loss_type": "standard",
+    "price_weight": 0.7,
+    "direction_weight": 0.3
+  },
+  
+  "_notes": {
+    "1": "These parameters are kept fixed to reduce search space",
+    "2": "You can modify these based on your specific needs",
+    "3": "For directional loss tuning, move loss params to tunable_config.json"
+  }
+}

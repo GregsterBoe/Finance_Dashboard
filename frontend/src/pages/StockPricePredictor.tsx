@@ -70,6 +70,10 @@ interface TrainingResponse {
     last_close: number;
     predicted_change: number;
     predicted_change_pct: number;
+    
+    // NEW: Return metrics
+    predicted_return?: number;  // e.g., 0.015
+    predicted_return_pct?: number;  // e.g., 1.51
   };
   feature_importance: Record<string, number>;
   training_period: {
@@ -110,7 +114,7 @@ export default function StockPricePredictor() {
     epochs: 100,
     batch_size: 32,
     validation_sequences: 30,
-    early_stopping_patience: 10,
+    early_stopping_patience: 25,
     use_validation: true,
     
     // NEW: Enhanced LSTM defaults

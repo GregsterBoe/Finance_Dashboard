@@ -10,7 +10,9 @@ export interface TrainingMetrics {
   r2_score: number;
   mape: number;
   training_samples: number;
-  directional_accuracy?: number;
+  
+  direction_accuracy?: number;  // e.g., 65.5 (percent)
+  metric_type?: string;  // 'prices' or 'returns'
 }
 
 export type MetricKey = keyof TrainingMetrics;
@@ -31,7 +33,7 @@ export function formatMetricValue(key: MetricKey, value: number | undefined): st
   
   switch (key) {
     case 'mape':
-    case 'directional_accuracy':
+    case 'direction_accuracy':
       return `${value.toFixed(2)}%`;
     case 'rmse':
     case 'mae':
@@ -76,10 +78,10 @@ export const METRIC_CONFIGS: Record<MetricKey, MetricConfig> = {
     description: 'Mean Absolute Percentage Error - average percentage error',
     colorClass: 'bg-blue-50'
   },
-  directional_accuracy: {
-    key: 'directional_accuracy',
+  direction_accuracy: {
+    key: 'direction_accuracy',
     label: 'Directional Accuracy',
-    format: (v) => formatMetricValue('directional_accuracy', v),
+    format: (v) => formatMetricValue('direction_accuracy', v),
     description: 'Percentage of correct up/down movement predictions',
     colorClass: 'bg-purple-50'
   },
@@ -106,7 +108,7 @@ export function getMetricInterpretation(key: MetricKey, value: number): {
       if (value >= 0.5) return { status: 'fair', color: 'text-yellow-600' };
       return { status: 'poor', color: 'text-red-600' };
     
-    case 'directional_accuracy':
+    case 'direction_accuracy':
       if (value >= 70) return { status: 'excellent', color: 'text-green-600' };
       if (value >= 60) return { status: 'good', color: 'text-blue-600' };
       if (value >= 50) return { status: 'fair', color: 'text-yellow-600' };
@@ -130,7 +132,7 @@ export function getMetricInterpretation(key: MetricKey, value: number): {
 export function getOrderedMetrics(includeDirectional: boolean = true): MetricKey[] {
   const base: MetricKey[] = ['mae', 'rmse', 'mape', 'r2_score'];
   if (includeDirectional) {
-    base.push('directional_accuracy');
+    base.push('direction_accuracy');
   }
   base.push('training_samples');
   return base;

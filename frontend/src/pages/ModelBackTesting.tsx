@@ -58,6 +58,12 @@ interface BacktestResult {
   error: number;
   error_pct: number;
   training_samples: number;
+  
+  // NEW
+  actual_return?: number;
+  predicted_return?: number;
+  return_error?: number;
+  correct_direction?: boolean;
 }
 
 interface BacktestResponse {
@@ -106,7 +112,7 @@ export default function ModelBacktesting() {
     epochs: 100,
     batch_size: 32,
     validation_sequences: 30,
-    early_stopping_patience: 10,
+    early_stopping_patience: 25,
     use_validation: true,
     // Directional loss defaults (ensure numeric values to avoid undefined)
     use_directional_loss: false,

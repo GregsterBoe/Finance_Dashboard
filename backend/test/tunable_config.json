@@ -1,0 +1,73 @@
+{
+  "_comment": "Tunable LSTM hyperparameters for optimization",
+  "_description": "Each parameter has min, max, step, type, and scale",
+  
+  "sequence_length": {
+    "min": 10,
+    "max": 60,
+    "step": 10,
+    "type": "int",
+    "scale": "linear"
+  },
+  
+  "hidden_size": {
+    "min": 32,
+    "max": 256,
+    "step": 32,
+    "type": "int",
+    "scale": "linear"
+  },
+  
+  "num_layers": {
+    "min": 1,
+    "max": 3,
+    "step": 1,
+    "type": "int",
+    "scale": "linear"
+  },
+  
+  "dropout": {
+    "min": 0.0,
+    "max": 0.3,
+    "step": 0.05,
+    "type": "float",
+    "scale": "linear"
+  },
+  
+  "learning_rate": {
+    "min": 0.0001,
+    "max": 0.01,
+    "type": "float",
+    "scale": "log"
+  },
+  
+  "bidirectional": {
+    "values": [false, true],
+    "type": "categorical"
+  },
+  
+  "use_layer_norm": {
+    "values": [false, true],
+    "type": "categorical"
+  },
+  
+  "use_residual": {
+    "values": [false, true],
+    "type": "categorical"
+  },
+  
+  "weight_decay": {
+    "min": 0.00001,
+    "max": 0.01,
+    "type": "float",
+    "scale": "log"
+  },
+  
+  "gradient_clip_norm": {
+    "min": 0.5,
+    "max": 5.0,
+    "step": 0.5,
+    "type": "float",
+    "scale": "linear"
+  }
+}

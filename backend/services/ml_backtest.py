@@ -44,12 +44,19 @@ class BacktestConfig(BaseModel):
     notes: Optional[str] = None
 
 class BacktestResult(BaseModel):
+    """Updated backtest result with return metrics"""
     date: str
     actual_close: float
     predicted_close: float
-    error: float
-    error_pct: float
+    error: float  # predicted_close - actual_close
+    error_pct: float  # (error / actual_close) * 100
     training_samples: int
+    
+    # NEW: Return-based metrics
+    actual_return: Optional[float] = None  # Actual log return
+    predicted_return: Optional[float] = None  # Predicted log return
+    return_error: Optional[float] = None  # predicted_return - actual_return
+    correct_direction: Optional[bool] = None  # Did we predict up/down correctly?
 
 class BacktestResponse(BaseModel):
     status: str
@@ -145,17 +152,47 @@ def train_lstm_for_date(df: pd.DataFrame, end_idx: int, config: BacktestConfig):
         return None, 0
 
 def make_lstm_prediction(predictor: LSTMStockPredictor, df: pd.DataFrame, predict_idx: int):
-    """Make an LSTM prediction for a specific date"""
+    """
+    Make an LSTM prediction and return both price and return information
+    """
     try:
         df_pred = df.iloc[:predict_idx].copy()
-        predictions = predictor.predict(df_pred, last_sequence_only=True)
         
-        if predictions is not None and len(predictions) > 0:
-            return predictions[0][0]
-        return None
+        # Get prediction with conversion
+        result = predictor.predict_with_price_conversion(df_pred, last_sequence_only=True)
+        
+        predicted_price = result['predicted_price']
+        predicted_return = result['predicted_return']
+        last_close = result['last_close']
+        
+        # Get actual values for comparison
+        actual_close = df['Close'].iloc[predict_idx]
+        if predict_idx > 0:
+            prev_close = df['Close'].iloc[predict_idx - 1]
+            actual_return = np.log(actual_close / prev_close)
+        else:
+            actual_return = 0.0
+        
+        # Calculate errors
+        price_error = predicted_price - actual_close
+        price_error_pct = (price_error / actual_close) * 100
+        return_error = predicted_return - actual_return
+        correct_direction = (predicted_return > 0) == (actual_return > 0)
+        
+        return {
+            'predicted_close': predicted_price,
+            'actual_close': actual_close,
+            'error': price_error,
+            'error_pct': price_error_pct,
+            'predicted_return': predicted_return,
+            'actual_return': actual_return,
+            'return_error': return_error,
+            'correct_direction': correct_direction
+        }
     except Exception as e:
         print(f"LSTM prediction failed: {str(e)}")
         return None
+
 
 def train_model_for_date(df: pd.DataFrame, end_idx: int, config: BacktestConfig):
     """Train a model using data up to end_idx"""
@@ -265,18 +302,26 @@ async def backtest_model_stream(config: BacktestConfig):
                         training_samples = 0
                     
                     # Make prediction
-                    predicted_close = make_lstm_prediction(lstm_predictor, df, idx)
-                    actual_close = df['Close'].iloc[idx]
-                    error = predicted_close - actual_close
-                    error_pct = (error / actual_close) * 100
-                    
+                    lstm_outputs = make_lstm_prediction(lstm_predictor, df, idx)
+                    actual_close = lstm_outputs['actual_close']
+                    predicted_close = lstm_outputs['predicted_close']
+                    error = lstm_outputs['error']
+                    error_pct = lstm_outputs['error_pct']
+                    actual_return = lstm_outputs['actual_return']
+                    predicted_return = lstm_outputs['predicted_return']
+                    return_error = lstm_outputs['return_error']
+
                     predictions.append(BacktestResult(
                         date=df.index[idx].strftime("%Y-%m-%d"),
                         actual_close=round(actual_close, 2),
                         predicted_close=round(predicted_close, 2),
                         error=round(error, 2),
                         error_pct=round(error_pct, 2),
-                        training_samples=training_samples
+                        training_samples=training_samples,
+                        predicted_return=round(predicted_return, 6),
+                        actual_return=round(actual_return, 6),
+                        return_error=round(return_error, 6),
+                        correct_direction=(predicted_return > 0) == (actual_return > 0)
                     ))
                     
                     if (i + 1) % 5 == 0 or i == total_predictions - 1:
