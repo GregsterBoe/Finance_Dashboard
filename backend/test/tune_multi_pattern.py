@@ -7,7 +7,7 @@ patterns = generate_all_patterns(n_days=300)
 # 2. Create multi-pattern tuner
 tuner = MultiPatternTuner(
     fixed_config_path='fixed_config.json',
-    tunable_config_path='tunable_config_quick.json',
+    tunable_config_path='tunable_config.json',
     results_dir='multi_pattern_results'
 )
 

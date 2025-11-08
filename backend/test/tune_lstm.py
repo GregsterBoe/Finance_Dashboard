@@ -14,7 +14,7 @@ df_val = df.iloc[train_size:]
 # 2. Create tuner
 tuner = LSTMTuner(
     fixed_config_path='fixed_config.json',
-    tunable_config_path='tunable_config_quick.json',
+    tunable_config_path='tunable_config.json',
     results_dir='tuning_results'
 )
 

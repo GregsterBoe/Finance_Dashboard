@@ -32,7 +32,7 @@ venv/
 env/
 ENV/
 .venv/
-
+.finance_venv/
 # IDE files
 .vscode/
 .idea/
