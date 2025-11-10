@@ -57,6 +57,19 @@ class FeatureService:
             DataFrame with original data + engineered features
         """
         df = df.copy()
+
+        # Ensure required raw columns exist. Tests and some synthetic data
+        # may provide only a 'Close' series. Provide safe defaults for
+        # missing OHLCV columns to avoid KeyError during feature creation.
+        missing_raw = [c for c in self.raw_columns if c not in df.columns]
+        if missing_raw:
+            # Use Close as fallback for Open/High/Low; Volume default to 1.0
+            for c in missing_raw:
+                if c == 'Volume':
+                    df[c] = 1.0
+                else:
+                    # If Close exists, replicate it; otherwise fill with NaN
+                    df[c] = df['Close'] if 'Close' in df.columns else np.nan
         
         # BASIC FEATURES - Always included except lstm
         if feature_set in [FeatureSet.BASIC, FeatureSet.STANDARD, FeatureSet.ADVANCED]:
