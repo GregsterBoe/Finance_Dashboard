@@ -7,11 +7,12 @@ can provide selective prediction without model changes.
 
 import sys
 import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add backend directory to path (go up 3 levels: confidence_estimator -> experiments -> tests -> backend)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from models.confidence_estimator import ConfidenceEstimator, evaluate_with_confidence_threshold
 from models.lstm_model import LSTMStockPredictor
-from test_lstm_synthetic_data import generate_momentum, generate_mean_reversion, generate_complex_pattern
+from tests.experiments.synthetic_data.test_lstm_synthetic_data import generate_momentum, generate_mean_reversion, generate_complex_pattern
 
 
 def test_confidence_estimator(pattern_name, df):

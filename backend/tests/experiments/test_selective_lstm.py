@@ -14,15 +14,16 @@ This script compares:
 
 import sys
 import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add backend directory to path (go up 2 levels: experiments -> tests -> backend)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from models.selective_lstm_model import SelectiveLSTMPredictor
 from models.lstm_model import LSTMStockPredictor
-from test_lstm_synthetic_data import (
-    generate_simple_trend, generate_mean_reversion, 
+from tests.experiments.synthetic_data.test_lstm_synthetic_data import (
+    generate_simple_trend, generate_mean_reversion,
     generate_momentum, generate_complex_pattern, generate_random_walk
 )
 

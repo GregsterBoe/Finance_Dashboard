@@ -776,7 +776,10 @@ export default function ModelBacktesting() {
           {backtestResult && (
             <div className="mt-6 space-y-6">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold">Backtest Results</h3>
+                <div>
+                  <h3 className="text-lg font-semibold">Backtest Results</h3>
+                  <p className="text-sm text-gray-600 mt-1">Stock: <span className="font-semibold text-purple-600">{backtestResult.ticker}</span></p>
+                </div>
                 <button
                   onClick={resetBacktest}
                   className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400"

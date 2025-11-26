@@ -5,10 +5,10 @@ import sys
 import os
 import json
 
-# Add parent directory to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add backend directory to path (go up 3 levels: hyperparameter_tuning -> experiments -> tests -> backend)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from test_lstm_synthetic_data import run_full_test_suite
+from tests.experiments.synthetic_data.test_lstm_synthetic_data import run_full_test_suite
 from models.lstm_model import LSTMStockPredictor
 
 def load_optimal_config(config_path: str = 'multi_pattern_results/best_config.json'):

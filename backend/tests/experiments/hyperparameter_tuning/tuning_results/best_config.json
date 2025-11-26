@@ -1,0 +1,31 @@
+{
+  "score": 60.0,
+  "config": {
+    "model_dir": "models/tuned_lstm",
+    "epochs": 100,
+    "batch_size": 32,
+    "validation_sequences": 50,
+    "use_validation": true,
+    "early_stopping_patience": 15,
+    "lr_patience": 10,
+    "lr_factor": 0.5,
+    "min_lr": 1e-06,
+    "use_directional_loss": false,
+    "directional_loss_config": {
+      "loss_type": "standard",
+      "price_weight": 0.7,
+      "direction_weight": 0.3
+    },
+    "sequence_length": 49,
+    "hidden_size": 45,
+    "num_layers": 2,
+    "dropout": 0.18878182807466962,
+    "learning_rate": 0.00019793856124072383,
+    "bidirectional": true,
+    "use_layer_norm": false,
+    "use_residual": true,
+    "weight_decay": 1.6381084549529404e-05,
+    "gradient_clip_norm": 4.907818403664406
+  },
+  "timestamp": "2025-11-26T21:53:06.405430"
+}

@@ -71,9 +71,10 @@ backend/data/rss/matched.json
 backend/data/rss/matched_export.json
 backend/data/rss/rss_semantic.db
 backend/training_results.json
-backend/lstm_models/
 
-backend/test/*.png
-backend/test/tuning_results/
-backend/test/multi_pattern_results/
-backend/test/selective_lstm_models/
+# Model artifacts and test results
+backend/saved_models/
+backend/tests/results/
+*.png
+*.pth
+*.pkl

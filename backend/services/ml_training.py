@@ -3,9 +3,6 @@ from pydantic import BaseModel
 from datetime import datetime, timedelta
 import sklearn
 import numpy as np
-from sklearn.tree import DecisionTreeRegressor
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from typing import Dict, Any, List, Optional
@@ -20,6 +17,7 @@ from models.lstm_model import LSTMStockPredictor
 from services.data_provider import get_data_provider
 from services.feature_service import get_feature_service, FeatureSet
 from services.metrics_service import get_metrics_service
+from utils.model_factory import create_model
 import torch
 
 router = APIRouter()
@@ -54,7 +52,7 @@ def train_lstm_model(df: pd.DataFrame, config: TrainingConfig):
         num_layers=config.model_spec.num_layers,
         dropout=config.model_spec.dropout,
         learning_rate=config.model_spec.learning_rate,
-        model_dir='lstm_models',
+        model_dir='saved_models/production',
         
         # NEW: Enhanced LSTM parameters (add these if they exist in ModelConfig)
         bidirectional=getattr(config.model_spec, 'bidirectional', True),
@@ -170,36 +168,6 @@ def train_lstm_model(df: pd.DataFrame, config: TrainingConfig):
     return predictor, rmse, mae, r2, mape, predicted_price, model_path
 
 
-def create_model(config: ModelConfig):
-    """Create a model instance based on configuration"""
-    if config.model_type == ModelType.DECISION_TREE:
-        return DecisionTreeRegressor(
-            max_depth=config.max_depth,
-            min_samples_split=config.min_samples_split,
-            min_samples_leaf=config.min_samples_leaf,
-            random_state=config.random_state
-        )
-    elif config.model_type == ModelType.RANDOM_FOREST:
-        return RandomForestRegressor(
-            n_estimators=config.n_estimators,
-            max_depth=config.max_depth,
-            min_samples_split=config.min_samples_split,
-            min_samples_leaf=config.min_samples_leaf,
-            random_state=config.random_state
-        )
-    elif config.model_type == ModelType.LINEAR_REGRESSION:
-        return LinearRegression()
-    elif config.model_type == ModelType.LSTM:
-        return LSTMStockPredictor(
-            sequence_length=config.sequence_length,
-            hidden_size=config.hidden_size,
-            num_layers=config.num_layers,
-            dropout=config.dropout,
-            learning_rate=config.learning_rate,
-            model_dir='lstm_models'
-        )
-    else:
-        raise ValueError(f"Unsupported model type: {config.model_type}")
 
 @router.post("/train-model", response_model=TrainingResponse)
 async def train_model(config: TrainingConfig):

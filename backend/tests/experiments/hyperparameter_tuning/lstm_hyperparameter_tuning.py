@@ -25,12 +25,12 @@ from sklearn.model_selection import TimeSeriesSplit
 import warnings
 warnings.filterwarnings('ignore')
 
-# Add parent directory to path to allow imports from models/
-# This allows the script to work when run from test/ directory
+# Add backend directory to path to allow imports from models/
+# Go up 3 levels: hyperparameter_tuning -> experiments -> tests -> backend
 current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
 
 
 # ============================================================================
@@ -352,10 +352,7 @@ class LSTMTuner:
         try:
             from models.lstm_model import LSTMStockPredictor
         except ModuleNotFoundError:
-            # Running from test directory, need to go up one level
-            import sys
-            import os
-            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+            # Import is already handled at top of file
             from models.lstm_model import LSTMStockPredictor
         
         try:

@@ -20,13 +20,14 @@ import json
 import asyncio
 
 from models.ml_models import (
-    ModelConfig, ModelType, TrainingMetrics, TrainingResult, 
+    ModelConfig, ModelType, TrainingMetrics, TrainingResult,
     ResultsManager, generate_run_id
 )
 from models.lstm_model import LSTMStockPredictor
 from services.data_provider import get_data_provider
 from services.feature_service import get_feature_service, FeatureSet
 from services.metrics_service import get_metrics_service
+from utils.model_factory import create_model
 
 
 
@@ -77,27 +78,6 @@ def yield_progress(message: str, progress: float, data: dict = None):
     }
     return f"data: {json.dumps(event_data)}\n\n"
 
-def create_model(config: ModelConfig):
-    """Create a model instance based on configuration"""
-    if config.model_type == ModelType.DECISION_TREE:
-        return DecisionTreeRegressor(
-            max_depth=config.max_depth,
-            min_samples_split=config.min_samples_split,
-            min_samples_leaf=config.min_samples_leaf,
-            random_state=config.random_state
-        )
-    elif config.model_type == ModelType.RANDOM_FOREST:
-        return RandomForestRegressor(
-            n_estimators=config.n_estimators,
-            max_depth=config.max_depth,
-            min_samples_split=config.min_samples_split,
-            min_samples_leaf=config.min_samples_leaf,
-            random_state=config.random_state
-        )
-    elif config.model_type == ModelType.LINEAR_REGRESSION:
-        return LinearRegression()
-    else:
-        raise ValueError(f"Unsupported model type: {config.model_type}")
     
 def train_lstm_for_date(df: pd.DataFrame, end_idx: int, config: BacktestConfig):
     """Train an LSTM model using data up to end_idx"""
@@ -116,7 +96,7 @@ def train_lstm_for_date(df: pd.DataFrame, end_idx: int, config: BacktestConfig):
         num_layers=config.model_spec.num_layers,
         dropout=config.model_spec.dropout,
         learning_rate=config.model_spec.learning_rate,
-        model_dir='lstm_models_backtest',
+        model_dir='saved_models/backtests',
         # advanced parameters
         bidirectional=config.model_spec.bidirectional,
         use_layer_norm=config.model_spec.use_layer_norm,

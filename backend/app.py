@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from services.market import router as market_router
-from services.stock_assesment import router as stock_router
+from services.stock_assessment import router as stock_router
 from services.whale_watching import router as whale_router
 from services.ml_training import router as ml_router
 from services.ml_backtest import router as backtest_router

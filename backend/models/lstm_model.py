@@ -193,8 +193,8 @@ class LSTMStockPredictor:
     Enhanced LSTM-based stock price predictor with advanced training features
     """
     def __init__(self, sequence_length: int = 20, hidden_size: int = 64,
-                 num_layers: int = 2, dropout: float = 0.2, 
-                 learning_rate: float = 0.001, model_dir: str = 'lstm_models',
+                 num_layers: int = 2, dropout: float = 0.2,
+                 learning_rate: float = 0.001, model_dir: str = 'saved_models/production',
                  bidirectional: bool = True, use_layer_norm: bool = True,
                  use_residual: bool = True, weight_decay: float = 1e-5,
                  gradient_clip_norm: float = 1.0, use_directional_loss: bool = False,

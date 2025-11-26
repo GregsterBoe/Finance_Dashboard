@@ -1,9 +1,10 @@
 import sys
 import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add backend directory to path (go up 3 levels: hyperparameter_tuning -> experiments -> tests -> backend)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from lstm_hyperparameter_tuning import LSTMTuner
-from test_lstm_synthetic_data import generate_momentum
+from tests.experiments.hyperparameter_tuning.lstm_hyperparameter_tuning import LSTMTuner
+from tests.experiments.synthetic_data.test_lstm_synthetic_data import generate_momentum
 
 # 1. Generate test data
 df = generate_momentum(n_days=400)

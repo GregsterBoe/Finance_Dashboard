@@ -6,13 +6,17 @@ This module extends the base tuning to optimize across multiple market patterns,
 finding configurations that work well across different scenarios.
 """
 
+import sys
+import os
+# Add backend directory to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+
 import pandas as pd
 import numpy as np
 from typing import Dict, List
-from lstm_hyperparameter_tuning import LSTMTuner, convert_to_serializable
+from tests.experiments.hyperparameter_tuning.lstm_hyperparameter_tuning import LSTMTuner, convert_to_serializable
 from datetime import datetime
 import json
-import os
 
 
 class MultiPatternTuner:
