@@ -76,3 +76,4 @@ backend/lstm_models/
 backend/test/*.png
 backend/test/tuning_results/
 backend/test/multi_pattern_results/
+backend/test/selective_lstm_models/

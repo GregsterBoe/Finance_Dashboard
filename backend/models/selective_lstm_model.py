@@ -170,97 +170,73 @@ class SelectiveLSTMModel(nn.Module):
 
 class SelectiveLoss(nn.Module):
     """
-    **IMPROVED**: Simplified and stabilized loss function.
+    **High-Precision Loss Function**
+
+    This loss is designed to maximize precision (correctness) at the
+    cost of coverage (recall). It has two independent parts:
+
+    1.  **Price Loss (L1/MAE)**:
+        This is a standard loss that trains the price prediction head
+        to be as accurate as possible on *all* samples.
+
+    2.  **Confidence Loss (MSE)**:
+        This trains the confidence head to solve a binary classification
+        problem: "Will the price head's direction be correct?"
+        - Target = 1.0 if direction is correct
+        - Target = 0.0 if direction is wrong
     
-    This loss function has three components:
-    1.  **Selective Price Loss**: The standard prediction error (L1/MAE),
-        but weighted by the `confidence` score. If confidence is 0,
-        the error for that sample doesn't count.
-    2.  **Coverage Loss**: A penalty for deviating from the `target_coverage`.
-        This forces the model to abstain selectively, not on everything.
-    3.  **Direction Loss**: A bonus for predicting the correct *direction*
-        (up/down) when confident.
+    This decouples the tasks: the price head learns to predict price,
+    and the confidence head learns to predict *when the price head is right*.
     """
-    def __init__(self, 
-                 target_coverage: float = 0.7,
-                 coverage_weight: float = 1.0,  # Weight for coverage loss
-                 direction_weight: float = 0.5): # Weight for direction loss
+    def __init__(self, confidence_weight: float = 1.0):
         """
         Args:
-            target_coverage: Target % of days to make predictions (0-1)
-            coverage_weight: Weight for coverage loss (higher = stronger enforcement)
-            direction_weight: Weight for the directional correctness loss
+            confidence_weight: How much to weigh the confidence loss
+                               relative to the price prediction loss.
         """
         super(SelectiveLoss, self).__init__()
-        self.target_coverage = target_coverage
-        self.coverage_weight = coverage_weight
-        self.direction_weight = direction_weight
+        self.confidence_weight = confidence_weight
         
     def forward(self, price_pred, confidence, actual_price, prev_price):
         """
-        Calculate selective loss with improved calibration
+        Calculate the decoupled loss.
         """
         
         # ========================================================================
-        # 1. SELECTIVE PREDICTION LOSS
+        # 1. PRICE PREDICTION LOSS (Trains the price head)
         # ========================================================================
-        # Calculate per-sample L1 error (MAE).
-        # This is stable as price_pred and actual_price are both in [0, 1].
-        # We use 'none' to get per-sample errors, not a mean.
-        price_error = F.l1_loss(price_pred, actual_price, reduction='none')
-        
-        # **Key Idea**: Only penalize errors on samples the model is
-        # confident about. If confidence=0, loss=0 for that sample.
-        selective_price_loss = (confidence * price_error).mean()
+        # Standard L1 loss to train the price head to be accurate.
+        # This is calculated on *all* samples.
+        price_loss = F.l1_loss(price_pred, actual_price)
         
         # ========================================================================
-        # 2. COVERAGE LOSS
+        # 2. CONFIDENCE CALIBRATION LOSS (Trains the confidence head)
         # ========================================================================
-        # This forces the average confidence to be near the target.
-        # It's the "penalty" that stops the model from setting all
-        # confidence to 0 to achieve a perfect selective_price_loss.
-        # target_quantile = self.target_coverage  # 0.7
-        # confidence_threshold_adaptive = torch.quantile(confidence, target_quantile)
-
-        # Penalize if too many are above this adaptive threshold
-        # actual_coverage = (confidence > confidence_threshold_adaptive).float().mean()
-        # coverage_loss = self.coverage_weight * (actual_coverage - target_quantile) ** 2
-
-        actual_coverage = confidence.mean()
-
-        # We use a simple L2 penalty (squared error)
-        coverage_loss = self.coverage_weight * (actual_coverage - self.target_coverage) ** 2
         
-        # ========================================================================
-        # 3. DIRECTIONAL LOSS
-        # ========================================================================
-        pred_direction = (price_pred > prev_price).float()
-        actual_direction = (actual_price > prev_price).float()
-        correct_direction = (pred_direction == actual_direction).float()
+        # Determine the "ground truth" for confidence: was the direction correct?
+        # We must detach price_pred and prev_price here so that this
+        # calculation does not send gradients back to the price head.
+        pred_direction = (price_pred.detach() > prev_price.detach()).float()
+        actual_direction = (actual_price.detach() > prev_price.detach()).float()
         
-        # We want to *minimize* this loss.
-        # - Penalize confident WRONG directions: (confidence * (1 - correct_direction))
-        # - Reward confident RIGHT directions: -(confidence * correct_direction)
-        direction_loss = (confidence * (1 - correct_direction)).mean() - \
-                         (confidence * correct_direction).mean()
+        # The target for confidence is 1.0 if correct, 0.0 if wrong.
+        target_confidence = (pred_direction == actual_direction).float()
+        
+        # Train the confidence head to predict this target.
+        # We use MSELoss (confidence vs. 0.0/1.0 target).
+        confidence_loss = F.mse_loss(confidence, target_confidence)
         
         # ========================================================================
         # TOTAL LOSS
         # ========================================================================
-        total_loss = (
-            selective_price_loss +
-            coverage_loss +
-            self.direction_weight * direction_loss
-        )
+        total_loss = price_loss + (self.confidence_weight * confidence_loss)
         
         # Return loss and metrics for monitoring
         metrics = {
             'total_loss': total_loss.item(),
-            'selective_price_loss': selective_price_loss.item(),
-            'coverage_loss': coverage_loss.item(),
-            'direction_loss': direction_loss.item(),
-            'actual_coverage': actual_coverage.item(),
-            'total_direction_accuracy': correct_direction.mean().item()
+            'price_loss': price_loss.item(),
+            'confidence_loss': confidence_loss.item(),
+            'avg_target_confidence': target_confidence.mean().item() # This is the batch's total accuracy
         }
         
         return total_loss, metrics
@@ -268,7 +244,13 @@ class SelectiveLoss(nn.Module):
 
 class SelectiveLSTMPredictor:
     """
-    Selective LSTM Stock Predictor with abstention capability
+    Selective LSTM Stock Predictor
+    Refactored for HIGH PRECISION, LOW COVERAGE.
+
+    This model no longer tries to hit a 'target_coverage'.
+    Instead, it learns to predict its own directional accuracy.
+    You control coverage by setting a high 'confidence_threshold'
+    at prediction time.
     """
     def __init__(self, 
                  sequence_length: int = 20, 
@@ -282,10 +264,14 @@ class SelectiveLSTMPredictor:
                  use_residual: bool = True, 
                  weight_decay: float = 1e-5,
                  gradient_clip_norm: float = 1.0,
-                 target_coverage: float = 0.7,
-                 coverage_weight: float = 10.0,
-                 direction_weight: float = 0.5,
-                 confidence_threshold: float = 0.5):
+                 # --- NEW/CHANGED PARAMETERS ---
+                 confidence_weight: float = 1.0,
+                 confidence_threshold: float = 0.8
+                 # --- REMOVED PARAMETERS ---
+                 # target_coverage (removed)
+                 # coverage_weight (removed)
+                 # direction_weight (removed)
+                ):
         
         self.sequence_length = sequence_length
         self.hidden_size = hidden_size
@@ -298,9 +284,11 @@ class SelectiveLSTMPredictor:
         self.use_residual = use_residual
         self.weight_decay = weight_decay
         self.gradient_clip_norm = gradient_clip_norm
-        self.target_coverage = target_coverage
-        self.coverage_weight = coverage_weight
-        self.direction_weight = direction_weight
+        
+        # Parameters for the new loss
+        self.confidence_weight = confidence_weight
+        
+        # This is now *only* for prediction, not training
         self.confidence_threshold = confidence_threshold
         
         os.makedirs(model_dir, exist_ok=True)
@@ -312,8 +300,8 @@ class SelectiveLSTMPredictor:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
         print(f"Using device: {self.device}")
-        print(f"Selective LSTM - Target coverage: {target_coverage*100:.0f}%")
-        print(f"Confidence threshold: {confidence_threshold}")
+        print(f"High-Precision Selective LSTM Initialized.")
+        print(f"Prediction Confidence Threshold: {self.confidence_threshold}")
 
     def _create_sequences(self, features: np.ndarray, targets: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Create sequences for LSTM training, including previous prices for direction calculation"""
@@ -340,42 +328,32 @@ class SelectiveLSTMPredictor:
         Train the selective LSTM model
         """
         print(f"\n{'='*80}")
-        print("TRAINING SELECTIVE LSTM")
+        print("TRAINING HIGH-PRECISION SELECTIVE LSTM")
         print(f"{'='*80}")
         
+        # (This section is unchanged from your file)
         feature_service = get_feature_service()
         df_features, feature_cols = feature_service.prepare_for_lstm(
             df, 
             feature_set=FeatureSet.LSTM
         )
-        
         self.feature_columns = feature_cols
         df_clean = df_features[self.feature_columns + ['Close']].dropna()
-        
-        if len(df_clean) < self.sequence_length + validation_sequences + 10:
-            print(f"Warning: Insufficient data. Found {len(df_clean)} rows.")
-            if len(df_clean) < self.sequence_length + 2:
-                raise ValueError("Not enough data to create even one sequence.")
+        if len(df_clean) < self.sequence_length + 2:
+            raise ValueError("Not enough data to create even one sequence.")
         
         features = df_clean[self.feature_columns].values
         targets = df_clean['Close'].values.reshape(-1, 1)
-        
         self.feature_scaler.fit(features)
         self.target_scaler.fit(targets)
-        
         features_scaled = self.feature_scaler.transform(features)
         targets_scaled = self.target_scaler.transform(targets)
         
         X, y, y_prev = self._create_sequences(features_scaled, targets_scaled)
-        
-        if len(X) == 0:
-            raise ValueError("No sequences created. Check data length and sequence_length.")
-
+        # (Data splitting logic is unchanged)
         if use_validation:
             val_size = min(validation_sequences, len(X) // 5)
-            if val_size == 0 and len(X) > 1:
-                val_size = 1 # At least one validation sample
-            
+            if val_size == 0 and len(X) > 1: val_size = 1
             if val_size == 0:
                 print("Warning: Not enough data for validation split. Disabling validation.")
                 use_validation = False
@@ -414,22 +392,22 @@ class SelectiveLSTMPredictor:
             lr=self.learning_rate,
             weight_decay=self.weight_decay
         )
-        
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='min', factor=lr_factor, 
             patience=lr_patience, min_lr=min_lr
         )
         
+        # --- (CRITERION IS UPDATED) ---
         criterion = SelectiveLoss(
-            target_coverage=self.target_coverage,
-            coverage_weight=self.coverage_weight,
-            direction_weight=self.direction_weight
+            confidence_weight=self.confidence_weight
         )
         
         history = {
             'train_loss': [], 'val_loss': [],
-            'train_coverage': [], 'val_coverage': [],
+            'train_price_loss': [], 'val_price_loss': [],
+            'train_conf_loss': [], 'val_conf_loss': [],
             'train_total_dir_acc': [], 'val_selective_dir_acc': [],
+            'val_selective_coverage': [],
             'learning_rate': []
         }
         
@@ -440,7 +418,6 @@ class SelectiveLSTMPredictor:
         
         for epoch in range(epochs):
             self.model.train()
-            train_losses = []
             train_metrics_list = []
             
             for i in range(0, len(X_train), batch_size):
@@ -453,16 +430,15 @@ class SelectiveLSTMPredictor:
                 optimizer.zero_grad()
                 price_pred, confidence = self.model(batch_X)
                 
+                # --- (Loss call is updated) ---
                 loss, metrics = criterion(price_pred, confidence, batch_y, batch_y_prev)
                 loss.backward()
                 
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_norm)
                 optimizer.step()
                 
-                train_losses.append(loss.item())
                 train_metrics_list.append(metrics)
             
-            avg_train_loss = np.mean(train_losses)
             avg_train_metrics = {k: np.mean([m[k] for m in train_metrics_list]) for k in train_metrics_list[0].keys()}
             
             if use_validation:
@@ -472,11 +448,14 @@ class SelectiveLSTMPredictor:
                 
                 with torch.no_grad():
                     price_pred_val, confidence_val = self.model(X_val)
+                    # --- (Loss call is updated) ---
                     val_loss, val_metrics = criterion(price_pred_val, confidence_val, y_val, y_prev_val)
                     
                     scheduler.step(val_loss)
                     
-                    # Calculate selective accuracy (accuracy on predictions *above threshold*)
+                    # --- (Validation logic is unchanged) ---
+                    # We still use the *fixed* threshold to see how
+                    # the model would perform in production.
                     high_conf_mask = (confidence_val > self.confidence_threshold).squeeze()
                     val_selective_coverage = high_conf_mask.float().mean().item()
                     
@@ -491,25 +470,28 @@ class SelectiveLSTMPredictor:
                     else:
                         val_selective_acc = 0.0 # No predictions made
                 
-                history['train_loss'].append(avg_train_loss)
-                history['val_loss'].append(val_loss.item())
-                history['train_coverage'].append(avg_train_metrics['actual_coverage'])
-                history['val_coverage'].append(val_metrics['actual_coverage'])
-                # ---
-                # **FIXED**: Clarified metric names
-                # ---
-                history['train_total_dir_acc'].append(avg_train_metrics['total_direction_accuracy'])
+                # --- (History logging is updated) ---
+                history['train_loss'].append(avg_train_metrics['total_loss'])
+                history['val_loss'].append(val_metrics['total_loss'])
+                history['train_price_loss'].append(avg_train_metrics['price_loss'])
+                history['val_price_loss'].append(val_metrics['price_loss'])
+                history['train_conf_loss'].append(avg_train_metrics['confidence_loss'])
+                history['val_conf_loss'].append(val_metrics['confidence_loss'])
+                history['train_total_dir_acc'].append(avg_train_metrics['avg_target_confidence'])
                 history['val_selective_dir_acc'].append(val_selective_acc)
+                history['val_selective_coverage'].append(val_selective_coverage)
                 history['learning_rate'].append(optimizer.param_groups[0]['lr'])
                 
                 if (epoch + 1) % 10 == 0:
                     print(f"\nEpoch {epoch+1}/{epochs}")
-                    print(f"  Train Loss: {avg_train_loss:.6f} | Val Loss: {val_loss:.6f}")
-                    print(f"  Train/Val Coverage (Avg): {avg_train_metrics['actual_coverage']*100:.1f}% / {val_metrics['actual_coverage']*100:.1f}%")
-                    print(f"  Train Total Dir Acc: {avg_train_metrics['total_direction_accuracy']*100:.1f}%")
-                    print(f"  Val Selective Dir Acc: {val_selective_acc*100:.1f}% (on {val_selective_coverage*100:.1f}% of data)")
+                    print(f"  Train Loss: {avg_train_metrics['total_loss']:.6f} | Val Loss: {val_metrics['total_loss']:.6f}")
+                    print(f"    - Price Loss (T/V): {avg_train_metrics['price_loss']:.4f} / {val_metrics['price_loss']:.4f}")
+                    print(f"    - Conf. Loss (T/V): {avg_train_metrics['confidence_loss']:.4f} / {val_metrics['confidence_loss']:.4f}")
+                    print(f"  Train Total Dir Acc: {avg_train_metrics['avg_target_confidence']*100:.1f}%")
+                    print(f"  Val Selective Acc: {val_selective_acc*100:.1f}% (Coverage: {val_selective_coverage*100:.1f}%)")
                     print(f"  LR: {optimizer.param_groups[0]['lr']:.2e}")
                 
+                # (Early stopping logic is unchanged)
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
                     patience_counter = 0
@@ -523,13 +505,11 @@ class SelectiveLSTMPredictor:
                     break
             else:
                 # No validation
-                history['train_loss'].append(avg_train_loss)
-                history['train_coverage'].append(avg_train_metrics['actual_coverage'])
-                history['train_total_dir_acc'].append(avg_train_metrics['total_direction_accuracy'])
+                history['train_loss'].append(avg_train_metrics['total_loss'])
                 history['learning_rate'].append(optimizer.param_groups[0]['lr'])
                 
                 if (epoch + 1) % 10 == 0:
-                    print(f"\nEpoch {epoch+1}/{epochs} | Train Loss: {avg_train_loss:.6f}")
+                    print(f"\nEpoch {epoch+1}/{epochs} | Train Loss: {avg_train_metrics['total_loss']:.6f}")
         
         print(f"\n{'='*80}")
         print("TRAINING COMPLETE")
@@ -537,9 +517,16 @@ class SelectiveLSTMPredictor:
         
         return history
 
+    # ---
+    # The predict_with_confidence and predict methods are
+    # unchanged from your original 'selective_lstm_model.py' file.
+    # They already use self.confidence_threshold, which is now
+    # the correct behavior.
+    # ---
     def predict_with_confidence(self, df: pd.DataFrame, last_sequence_only: bool = True):
         """
         Make predictions with confidence scores
+        (This function is unchanged)
         """
         if self.model is None:
             raise ValueError("Model not trained. Call train() first.")
@@ -549,10 +536,7 @@ class SelectiveLSTMPredictor:
             df,
             feature_set=FeatureSet.LSTM
         )
-        
-        # Keep track of original indices before dropping NaNs
         original_indices = df_features.index
-        
         df_clean = df_features[self.feature_columns + ['Close']].dropna()
         
         if len(df_clean) < self.sequence_length:
@@ -566,19 +550,16 @@ class SelectiveLSTMPredictor:
             }
 
         last_close = df_clean['Close'].iloc[-1]
-        
         features_scaled = self.feature_scaler.transform(df_clean[self.feature_columns].values)
         
         if last_sequence_only:
             X = features_scaled[-self.sequence_length:].reshape(1, self.sequence_length, -1)
-            # We are predicting for the day *after* the last row in df_clean
             prediction_indices = [df_clean.index[-1]] 
         else:
             num_sequences = len(features_scaled) - self.sequence_length + 1
             X = np.zeros((num_sequences, self.sequence_length, features_scaled.shape[1]))
             for i in range(num_sequences):
                 X[i] = features_scaled[i:i+self.sequence_length]
-            # Predictions correspond to the *end* of each sequence
             prediction_indices = df_clean.index[self.sequence_length-1:]
         
         X = torch.FloatTensor(X).to(self.device)
@@ -592,12 +573,12 @@ class SelectiveLSTMPredictor:
         
         predicted_prices = self.target_scaler.inverse_transform(price_pred_scaled)
         
+        # This is the key: it uses the fixed threshold
         should_predict = confidence > self.confidence_threshold
         
         predicted_prices_selective = predicted_prices.copy()
         predicted_prices_selective[~should_predict] = np.nan
         
-        # Create DataFrames to return data aligned with original dates
         results_df = pd.DataFrame({
             'predicted_prices': predicted_prices.flatten(),
             'confidence_scores': confidence.flatten(),
@@ -605,11 +586,9 @@ class SelectiveLSTMPredictor:
             'predicted_prices_selective': predicted_prices_selective.flatten()
         }, index=prediction_indices)
         
-        # Reindex to match the original df's index, filling missing with NaNs
         results_df = results_df.reindex(original_indices, fill_value=np.nan)
         
         if last_sequence_only:
-             # Return just the values for the single prediction
             return {
                 'predicted_prices': results_df['predicted_prices'].values,
                 'confidence_scores': results_df['confidence_scores'].values,
@@ -619,12 +598,12 @@ class SelectiveLSTMPredictor:
                 'coverage': should_predict.mean()
             }
         else:
-            return results_df # Return the full DataFrame
-
+            return results_df
 
     def predict(self, df: pd.DataFrame, last_sequence_only: bool = True):
         """
-        Standard predict method (returns only predictions above threshold)
+        Standard predict method
+        (This function is unchanged)
         """
         result = self.predict_with_confidence(df, last_sequence_only)
         
@@ -632,62 +611,4 @@ class SelectiveLSTMPredictor:
             selective_price = result['predicted_prices_selective'][-1]
             return np.array([[selective_price]]) # Return NaN or value
         else:
-            # result is a DataFrame
             return result['predicted_prices_selective'].values.reshape(-1, 1)
-
-
-if __name__ == "__main__":
-    # Create some dummy data for testing
-    dates = pd.date_range(start='2020-01-01', periods=200)
-    price = 100 + np.cumsum(np.random.randn(200)) * 0.5
-    price[price < 10] = 10 # ensure positive prices
-    
-    df = pd.DataFrame({'Date': dates, 'Close': price})
-    df.set_index('Date', inplace=True)
-    
-    # Split data
-    df_train = df.iloc[:150]
-    df_test = df.iloc[140:] # Overlap to get features
-    
-    print(f"Training data: {len(df_train)} rows")
-    print(f"Test data: {len(df_test)} rows")
-
-    try:
-        model = SelectiveLSTMPredictor(
-            sequence_length=20,
-            target_coverage=0.7,  # Predict on 70% of days
-            confidence_threshold=0.5, # Only predict if confidence > 50%
-            coverage_weight=10.0,
-            direction_weight=0.0,
-            learning_rate=0.005,
-            hidden_size=32
-        )
-        
-        print("\n--- Starting Model Training ---")
-        history = model.train(df_train, epochs=50, validation_sequences=30, early_stopping_patience=10)
-        
-        print("\n--- Making Predictions ---")
-        result_df = model.predict_with_confidence(df_test, last_sequence_only=False)
-        
-        print("\nTest Predictions (non-selective):")
-        print(result_df[['predicted_prices', 'confidence_scores']].dropna().tail())
-        
-        print("\nTest Predictions (Selective):")
-        print(result_df[['predicted_prices_selective']].dropna().tail())
-        
-        selective_coverage = result_df['should_predict'].mean()
-        print(f"\nActual coverage on test set: {selective_coverage*100:.1f}%")
-        
-        print("\n--- Making Single Last Prediction ---")
-        last_pred_result = model.predict_with_confidence(df_test, last_sequence_only=True)
-        
-        print(f"Last Close Price: {last_pred_result['last_close']:.2f}")
-        if last_pred_result['should_predict'][-1]:
-            print(f"Prediction for next day: {last_pred_result['predicted_prices'][-1]:.2f} (Confidence: {last_pred_result['confidence_scores'][-1]:.2f})")
-        else:
-            print(f"Model abstains from prediction (Confidence: {last_pred_result['confidence_scores'][-1]:.2f})")
-
-    except ValueError as e:
-        print(f"\nAn error occurred: {e}")
-    except Exception as e:
-        print(f"\nAn unexpected error occurred: {e}")

@@ -130,30 +130,28 @@ def evaluate_selective_model(predictor, df_test, y_prev_test, pattern_name, actu
     # Coerce to numpy arrays and ensure boolean mask for should_predict
     predictions = np.asarray(predictions_all[actual_test_start:]).astype(float)
     confidence = np.asarray(confidence_all[actual_test_start:]).astype(float)
-    target_coverage = predictor.target_coverage
+    # FIXED: Use the 'should_predict' array directly from the model.
+    # This array was already calculated using predictor.confidence_threshold.
+    should_predict = np.asarray(should_predict_all[actual_test_start:])
+
+    # Clean up potential NaNs from reindexing (which might be floats)
+    if np.issubdtype(should_predict.dtype, np.floating):
+        should_predict = np.where(np.isnan(should_predict), False, should_predict)
     
-    # Clean up confidence scores (remove NaNs from buffer/reindexing)
-    valid_mask = ~np.isnan(confidence)
-    confidence_valid = confidence[valid_mask]
+    should_predict = should_predict.astype(bool)
     
-    if len(confidence_valid) == 0:
-        # No valid predictions to evaluate
-        print("Warning: No valid confidence scores found in test set.")
-        selective_acc = 0.0
-        selective_rmse = float('inf')
-        coverage = 0.0
-        should_predict = np.zeros_like(confidence, dtype=bool)
-    else:
-        # Find the confidence threshold that gives us the target coverage
-        # e.g., for 0.5 coverage, we find the 50th percentile
-        # We use (1.0 - target_coverage) because quantile(0.5) is the 50th percentile
-        threshold = np.quantile(confidence_valid, 1.0 - target_coverage)
-        
-        # We predict on any day where confidence is >= this adaptive threshold
-        # We must use the original 'confidence' array (with NaNs) to keep alignment
-        should_predict = (confidence >= threshold)
-    
+    # Handle the case where no valid predictions were made
+    if len(predictions) == 0 or len(should_predict) == 0:
+        print("Warning: No valid data points found in test set.")
+        # Return empty/default metrics
+        return {
+            'pattern': pattern_name, 'overall_acc': 0.0, 'selective_acc': 0.0,
+            'coverage': 0.0, 'avg_confidence': 0.0, 'selective_rmse': np.inf,
+            'abstention_quality': np.nan, 'passed_selective': False
+        }
+
     # Get actual prices (only test portion)
+    # (The rest of your function from this point on is correct)
     actual_prices = df_test['Close'].values[actual_test_start:actual_test_start+len(predictions)]
     prev_prices = y_prev_test[:len(predictions)]
     
@@ -404,8 +402,9 @@ FIXES APPLIED:
         'bidirectional': True,
         'use_layer_norm': False,
         'use_residual': False,
-        'target_coverage': 0.10,
-        'confidence_threshold': 0.5
+        # --- NEW CONFIG ---
+        'confidence_weight': 0.0,   # Tune this: 0.5 - 5.0
+        'confidence_threshold': 0.5 # Your "precision" knob for prediction
     }
     
     # Test patterns with added noise for realism
