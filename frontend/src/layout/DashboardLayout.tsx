@@ -18,6 +18,7 @@ export default function DashboardLayout({ children }: Props) {
           <Link to="/activity-tracker">📈 Activity Tracker</Link>
           <Link to="/stock-price-predictor">🤖 Stock Price Predictor</Link>
           <Link to="/backtest">🔄 Model Backtesting</Link>
+          <Link to="/personal-finance">💰 Personal Finance</Link>
         </nav>
       </aside>
 

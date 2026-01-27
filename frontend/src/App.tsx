@@ -7,6 +7,7 @@ import WhaleWatchlist from "./pages/WhaleWatchlist";
 import ActivityTracker from "./pages/ActivityTracker";
 import StockPricePredictor from "./pages/StockPricePredictor";
 import ModelBacktesting from "./pages/ModelBackTesting";
+import PersonalFinance from "./pages/PersonalFinance";
 
 
 const queryClient = new QueryClient();
@@ -24,6 +25,7 @@ function App() {
             <Route path="/activity-tracker" element={<ActivityTracker />} />
             <Route path="/stock-price-predictor" element={<StockPricePredictor />} />
             <Route path="/backtest" element={<ModelBacktesting />} />
+            <Route path="/personal-finance" element={<PersonalFinance />} />
           </Routes>
         </DashboardLayout>
       </Router>
