@@ -72,6 +72,10 @@ backend/data/rss/matched_export.json
 backend/data/rss/rss_semantic.db
 backend/training_results.json
 
+# CSV uploads (personal finance data)
+backend/data/uploads/
+backend/data/temp_uploads/
+
 # Model artifacts and test results
 backend/saved_models/
 backend/tests/results/
