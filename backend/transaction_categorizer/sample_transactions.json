@@ -1,0 +1,49 @@
+{
+  "transactions": [
+    {
+      "booking_date": "30.12.25",
+      "value_date": "01.01.26",
+      "status": "Gebucht",
+      "payer": "DKB AG",
+      "payee": "DKB AG",
+      "purpose": "Abrechnung 30.12.2025 siehe Anlage",
+      "transaction_type": "Eingang",
+      "iban": "1205031105",
+      "amount": 0.0,
+      "currency": "EUR",
+      "creditor_id": null,
+      "mandate_reference": null,
+      "customer_reference": null
+    },
+    {
+      "booking_date": "28.12.25",
+      "value_date": "28.12.25",
+      "status": "Gebucht",
+      "payer": "Max Mustermann",
+      "payee": "REWE Markt GmbH",
+      "purpose": "Einkauf REWE Filiale 1234",
+      "transaction_type": "Ausgang",
+      "iban": "DE89370400440532013000",
+      "amount": -47.82,
+      "currency": "EUR",
+      "creditor_id": null,
+      "mandate_reference": null,
+      "customer_reference": null
+    },
+    {
+      "booking_date": "27.12.25",
+      "value_date": "27.12.25",
+      "status": "Gebucht",
+      "payer": "Arbeitgeber GmbH",
+      "payee": "Max Mustermann",
+      "purpose": "Gehalt Dezember 2025",
+      "transaction_type": "Eingang",
+      "iban": "DE89370400440532013001",
+      "amount": 3500.00,
+      "currency": "EUR",
+      "creditor_id": null,
+      "mandate_reference": null,
+      "customer_reference": null
+    }
+  ]
+}

@@ -11,6 +11,9 @@ interface Transaction {
   iban: string;
   amount: number;
   currency: string;
+  category?: string;
+  confidence?: string;
+  reasoning?: string;
 }
 
 interface Pagination {
@@ -169,6 +172,9 @@ export default function TransactionTable({
                   <SortIcon field="transaction_type" />
                 </div>
               </th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Category
+              </th>
               <th
                 className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                 onClick={() => handleSort("amount")}
@@ -202,6 +208,18 @@ export default function TransactionTable({
                   <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
                     {transaction.transaction_type || "Unknown"}
                   </span>
+                </td>
+                <td className="px-4 py-3 whitespace-nowrap text-sm">
+                  {transaction.category ? (
+                    <span
+                      className="px-2 py-1 text-xs font-medium rounded-full bg-purple-100 text-purple-800"
+                      title={transaction.reasoning || ""}
+                    >
+                      {transaction.category}
+                    </span>
+                  ) : (
+                    <span className="text-gray-400 text-xs">Uncategorized</span>
+                  )}
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium">
                   <span

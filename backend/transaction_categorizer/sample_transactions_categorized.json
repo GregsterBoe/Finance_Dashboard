@@ -1,0 +1,64 @@
+{
+  "transactions": [
+    {
+      "booking_date": "30.12.25",
+      "value_date": "01.01.26",
+      "status": "Gebucht",
+      "payer": "DKB AG",
+      "payee": "DKB AG",
+      "purpose": "Abrechnung 30.12.2025 siehe Anlage",
+      "transaction_type": "Eingang",
+      "iban": "1205031105",
+      "amount": 0.0,
+      "currency": "EUR",
+      "creditor_id": null,
+      "mandate_reference": null,
+      "customer_reference": null,
+      "category_info": {
+        "category": "Income & Salary",
+        "confidence": "High",
+        "reasoning": "Payer and payee are the same bank, purpose indicates salary payment."
+      }
+    },
+    {
+      "booking_date": "28.12.25",
+      "value_date": "28.12.25",
+      "status": "Gebucht",
+      "payer": "Max Mustermann",
+      "payee": "REWE Markt GmbH",
+      "purpose": "Einkauf REWE Filiale 1234",
+      "transaction_type": "Ausgang",
+      "iban": "DE89370400440532013000",
+      "amount": -47.82,
+      "currency": "EUR",
+      "creditor_id": null,
+      "mandate_reference": null,
+      "customer_reference": null,
+      "category_info": {
+        "category": "Groceries",
+        "confidence": "Medium",
+        "reasoning": "Payee is a known grocery store, purpose suggests shopping for groceries."
+      }
+    },
+    {
+      "booking_date": "27.12.25",
+      "value_date": "27.12.25",
+      "status": "Gebucht",
+      "payer": "Arbeitgeber GmbH",
+      "payee": "Max Mustermann",
+      "purpose": "Gehalt Dezember 2025",
+      "transaction_type": "Eingang",
+      "iban": "DE89370400440532013001",
+      "amount": 3500.0,
+      "currency": "EUR",
+      "creditor_id": null,
+      "mandate_reference": null,
+      "customer_reference": null,
+      "category_info": {
+        "category": "Salary",
+        "confidence": "High",
+        "reasoning": "Payer is the employer, payee is the employee, purpose indicates salary payment."
+      }
+    }
+  ]
+}

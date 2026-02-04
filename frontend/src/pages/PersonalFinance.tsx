@@ -6,6 +6,8 @@ import SummaryStats from "../components/SummaryStats";
 import TransactionTable from "../components/TransactionTable";
 import UploadListCard from "../components/UploadListCard";
 import BalanceChart from "../components/BalanceChart";
+import CategorizationModal from "../components/CategorizationModal";
+import CategoryBreakdown from "../components/CategoryBreakdown";
 
 const API_BASE = "http://localhost:8000";
 
@@ -43,12 +45,13 @@ interface Transaction {
 }
 
 type ViewMode = "list" | "upload" | "detail";
-type DetailViewMode = "table" | "chart";
+type DetailViewMode = "table" | "chart" | "categories";
 
 export default function PersonalFinance() {
   const [activeView, setActiveView] = useState<ViewMode>("list");
   const [detailViewMode, setDetailViewMode] = useState<DetailViewMode>("table");
   const [selectedUploadId, setSelectedUploadId] = useState<string | null>(null);
+  const [showCategorizationModal, setShowCategorizationModal] = useState(false);
   const queryClient = useQueryClient();
 
   // Fetch all uploads
@@ -101,7 +104,7 @@ export default function PersonalFinance() {
       );
       return res.data;
     },
-    enabled: !!selectedUploadId && activeView === "detail" && detailViewMode === "chart",
+    enabled: !!selectedUploadId && activeView === "detail" && (detailViewMode === "chart" || detailViewMode === "categories"),
   });
 
   // Upload mutation
@@ -241,12 +244,20 @@ export default function PersonalFinance() {
                   {new Date(uploadDetail.uploaded_at).toLocaleString()}
                 </p>
               </div>
-              <button
-                onClick={() => handleDelete(uploadDetail.upload_id)}
-                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition"
-              >
-                Delete
-              </button>
+              <div className="flex space-x-2">
+                <button
+                  onClick={() => setShowCategorizationModal(true)}
+                  className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition"
+                >
+                  🏷️ Categorize
+                </button>
+                <button
+                  onClick={() => handleDelete(uploadDetail.upload_id)}
+                  className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
             <SummaryStats summary={uploadDetail.summary} />
           </div>
@@ -268,13 +279,23 @@ export default function PersonalFinance() {
                 </button>
                 <button
                   onClick={() => setDetailViewMode("chart")}
-                  className={`px-6 py-2 text-sm font-medium rounded-r-lg transition ${
+                  className={`px-6 py-2 text-sm font-medium transition ${
                     detailViewMode === "chart"
                       ? "bg-blue-600 text-white"
                       : "bg-white text-gray-700 hover:bg-gray-100"
                   }`}
                 >
-                  📈 Balance Chart
+                  📈 Balance
+                </button>
+                <button
+                  onClick={() => setDetailViewMode("categories")}
+                  className={`px-6 py-2 text-sm font-medium rounded-r-lg transition ${
+                    detailViewMode === "categories"
+                      ? "bg-blue-600 text-white"
+                      : "bg-white text-gray-700 hover:bg-gray-100"
+                  }`}
+                >
+                  🏷️ Categories
                 </button>
               </div>
             </div>
@@ -299,7 +320,28 @@ export default function PersonalFinance() {
           {detailViewMode === "chart" && allTransactionsData && (
             <BalanceChart transactions={allTransactionsData.transactions} />
           )}
+
+          {/* Categories View */}
+          {detailViewMode === "categories" && allTransactionsData && (
+            <CategoryBreakdown transactions={allTransactionsData.transactions} />
+          )}
         </div>
+      )}
+
+      {/* Categorization Modal */}
+      {showCategorizationModal && selectedUploadId && uploadDetail && (
+        <CategorizationModal
+          uploadId={selectedUploadId}
+          filename={uploadDetail.filename}
+          onClose={() => setShowCategorizationModal(false)}
+          onDataRefresh={async () => {
+            // Refresh data after categorization
+            await queryClient.invalidateQueries({ queryKey: ["upload", selectedUploadId] });
+            await queryClient.invalidateQueries({ queryKey: ["transactions", selectedUploadId] });
+            await queryClient.invalidateQueries({ queryKey: ["all-transactions", selectedUploadId] });
+            await queryClient.refetchQueries({ queryKey: ["transactions", selectedUploadId, currentPage] });
+          }}
+        />
       )}
     </div>
   );

@@ -25,6 +25,9 @@ class TransactionData(BaseModel):
     creditor_id: Optional[str] = None
     mandate_reference: Optional[str] = None
     customer_reference: Optional[str] = None
+    category: Optional[str] = None
+    confidence: Optional[str] = None
+    reasoning: Optional[str] = None
 
 
 class UploadSummary(BaseModel):

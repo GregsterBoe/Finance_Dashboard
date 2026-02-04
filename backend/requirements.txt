@@ -22,3 +22,6 @@ PyYAML==6.0.2
 feedsearch==1.0.12
 tqdm>=4.66.0
 matplotlib>=3.7.1
+
+#categorizer
+ollama>=0.1.0 
