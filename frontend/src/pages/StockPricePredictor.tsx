@@ -1,7 +1,9 @@
 // frontend/src/pages/StockPricePredictor.tsx
-import { useState, useEffect } from "react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { useState, useEffect, useCallback } from "react";
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import MetricsDisplay from '../components/MetricsDisplay';
+import FinetuneProgressIndicator from '../components/FinetuneProgressIndicator';
+import type { FinetuneResponse } from '../components/FinetuneProgressIndicator';
 import type { TrainingMetrics } from '../types/metrics';
 
 interface ModelConfig {
@@ -92,6 +94,8 @@ export default function StockPricePredictor() {
   const [isTraining, setIsTraining] = useState(false);
   const [trainingResult, setTrainingResult] = useState<TrainingResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isFinetuning, setIsFinetuning] = useState(false);
+  const [finetuneResult, setFinetuneResult] = useState<FinetuneResponse | null>(null);
   
   const [config, setConfig] = useState<TrainingConfig>({
   ticker: "",
@@ -207,6 +211,46 @@ export default function StockPricePredictor() {
     setStep(1);
     setTrainingResult(null);
     setError(null);
+    setFinetuneResult(null);
+    setIsFinetuning(false);
+  };
+
+  const handleFinetune = () => {
+    setIsFinetuning(true);
+    setError(null);
+    setFinetuneResult(null);
+  };
+
+  const handleFinetuneComplete = useCallback((result: FinetuneResponse) => {
+    setFinetuneResult(result);
+    setIsFinetuning(false);
+  }, []);
+
+  const handleFinetuneError = useCallback((errorMessage: string) => {
+    setError(errorMessage);
+    setIsFinetuning(false);
+  }, []);
+
+  const applyBestConfig = (bestConfig: Record<string, any>) => {
+    setConfig(prev => ({
+      ...prev,
+      model_spec: {
+        ...prev.model_spec,
+        sequence_length: bestConfig.sequence_length ?? prev.model_spec.sequence_length,
+        hidden_size: bestConfig.hidden_size ?? prev.model_spec.hidden_size,
+        num_layers: bestConfig.num_layers ?? prev.model_spec.num_layers,
+        dropout: bestConfig.dropout ?? prev.model_spec.dropout,
+        learning_rate: bestConfig.learning_rate ?? prev.model_spec.learning_rate,
+        bidirectional: bestConfig.bidirectional ?? prev.model_spec.bidirectional,
+        use_layer_norm: bestConfig.use_layer_norm ?? prev.model_spec.use_layer_norm,
+        use_residual: bestConfig.use_residual ?? prev.model_spec.use_residual,
+        weight_decay: bestConfig.weight_decay ?? prev.model_spec.weight_decay,
+        gradient_clip_norm: bestConfig.gradient_clip_norm ?? prev.model_spec.gradient_clip_norm,
+      }
+    }));
+    setFinetuneResult(null);
+    setIsFinetuning(false);
+    setStep(3);
   };
 
   const featureImportanceData = trainingResult
@@ -911,7 +955,7 @@ export default function StockPricePredictor() {
       )}
 
       {/* Step 4: Train & Results */}
-      {step === 4 && !trainingResult && !error && (
+      {step === 4 && !trainingResult && !error && !isFinetuning && !finetuneResult && (
         <div className="bg-white p-6 rounded-lg shadow-md">
           <h2 className="text-xl font-semibold mb-4">Step 4: Train Model</h2>
           <div className="text-center py-8">
@@ -933,7 +977,20 @@ export default function StockPricePredictor() {
                   >
                     Start Training
                   </button>
+                  {config.model_spec.model_type === 'lstm' && (
+                    <button
+                      onClick={handleFinetune}
+                      className="px-8 py-3 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 font-semibold"
+                    >
+                      Finetune Hyperparameters
+                    </button>
+                  )}
                 </div>
+                {config.model_spec.model_type === 'lstm' && (
+                  <p className="text-xs text-gray-500 mt-4">
+                    Finetuning runs a random search over LSTM hyperparameters using your selected stock and time range to find the best configuration automatically.
+                  </p>
+                )}
               </>
             ) : (
               <>
@@ -941,6 +998,105 @@ export default function StockPricePredictor() {
                 <p className="text-gray-600">Training model... This may take a moment.</p>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Finetuning in progress */}
+      {step === 4 && isFinetuning && (
+        <div className="space-y-4">
+          <div className="bg-white p-6 rounded-lg shadow-md">
+            <h2 className="text-xl font-semibold mb-4">Finetuning LSTM Hyperparameters</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              Searching for the best LSTM configuration for <span className="font-semibold">{config.ticker}</span> ({config.start_date} to {config.end_date})
+            </p>
+            <FinetuneProgressIndicator
+              ticker={config.ticker}
+              startDate={config.start_date}
+              endDate={config.end_date}
+              nIterations={15}
+              onComplete={handleFinetuneComplete}
+              onError={handleFinetuneError}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Finetuning results */}
+      {step === 4 && finetuneResult && !error && (
+        <div className="space-y-6">
+          <div className="bg-yellow-50 border border-yellow-200 p-6 rounded-lg">
+            <h3 className="text-yellow-800 font-semibold mb-2">Finetuning Complete</h3>
+            <p className="text-yellow-700 text-sm">
+              Tested {finetuneResult.total_iterations} configurations. Best {finetuneResult.metric}: <span className="font-bold">{finetuneResult.best_score?.toFixed(4) ?? 'N/A'}</span>
+            </p>
+          </div>
+
+          {/* Best config card */}
+          <div className="bg-white p-6 rounded-lg shadow-md">
+            <h3 className="text-lg font-semibold mb-4">Best Configuration Found</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+              {[
+                ['Hidden Size', finetuneResult.best_config.hidden_size],
+                ['Num Layers', finetuneResult.best_config.num_layers],
+                ['Sequence Length', finetuneResult.best_config.sequence_length],
+                ['Learning Rate', finetuneResult.best_config.learning_rate?.toFixed(6)],
+                ['Dropout', finetuneResult.best_config.dropout?.toFixed(3)],
+                ['Bidirectional', finetuneResult.best_config.bidirectional ? 'Yes' : 'No'],
+                ['Layer Norm', finetuneResult.best_config.use_layer_norm ? 'Yes' : 'No'],
+                ['Residual', finetuneResult.best_config.use_residual ? 'Yes' : 'No'],
+                ['Weight Decay', finetuneResult.best_config.weight_decay?.toExponential(2)],
+                ['Grad Clip', finetuneResult.best_config.gradient_clip_norm?.toFixed(1)],
+              ].map(([label, value]) => (
+                <div key={String(label)} className="bg-gray-50 p-3 rounded">
+                  <div className="text-xs text-gray-500">{label}</div>
+                  <div className="font-semibold">{value ?? '—'}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Score progression chart */}
+          {finetuneResult.all_results.length > 1 && (
+            <div className="bg-white p-6 rounded-lg shadow-md">
+              <h3 className="text-lg font-semibold mb-4">Score Progression</h3>
+              <ResponsiveContainer width="100%" height={250}>
+                <LineChart
+                  data={finetuneResult.all_results.map((r, idx) => ({
+                    iteration: r.iteration,
+                    score: r.score,
+                    best: Math.max(
+                      ...finetuneResult.all_results
+                        .slice(0, idx + 1)
+                        .map((x) => x.score ?? -Infinity)
+                    ),
+                  }))}
+                >
+                  <XAxis dataKey="iteration" label={{ value: 'Iteration', position: 'insideBottom', offset: -5 }} />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Line type="monotone" dataKey="score" stroke="#9CA3AF" name="Score" dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="best" stroke="#D97706" name="Best so far" strokeWidth={2} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex justify-center gap-4">
+            <button
+              onClick={() => { setFinetuneResult(null); }}
+              className="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+            >
+              Discard
+            </button>
+            <button
+              onClick={() => applyBestConfig(finetuneResult.best_config)}
+              className="px-8 py-3 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 font-semibold"
+            >
+              Apply Best Config
+            </button>
           </div>
         </div>
       )}

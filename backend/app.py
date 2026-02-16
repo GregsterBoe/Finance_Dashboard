@@ -7,6 +7,7 @@ from services.ml_training import router as ml_router
 from services.ml_backtest import router as backtest_router
 from services.csv_upload_router import router as csv_router
 from services.categorizer_router import router as categorizer_router
+from services.ml_finetune import router as finetune_router
 
 app = FastAPI()
 
@@ -27,6 +28,7 @@ app.include_router(ml_router, prefix="/api", tags=["ml"])
 app.include_router(backtest_router, prefix="/api", tags=["backtest"])
 app.include_router(csv_router, prefix="/api", tags=["csv"])
 app.include_router(categorizer_router, prefix="/api", tags=["categorizer"])
+app.include_router(finetune_router, prefix="/api", tags=["finetune"])
 
 @app.get("/")
 def api_root():
