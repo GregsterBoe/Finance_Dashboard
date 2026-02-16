@@ -4,6 +4,7 @@ Integrates with the existing CSV handler and provides progress tracking.
 """
 
 import json
+import re
 from typing import List, Dict, Optional, Callable
 from pathlib import Path
 from pydantic import BaseModel, field_validator
@@ -11,26 +12,71 @@ from ollama import chat
 
 
 # =============================================================================
-# CATEGORIES - Edit this list to customize your transaction categories
+# CATEGORIES with German keywords for better LLM understanding
 # =============================================================================
 CATEGORIES = [
     "Groceries",
     "Dining & Restaurants",
     "Transportation",
-    "Utilities",
+    "Internet & Mobile",
     "Rent & Housing",
     "Insurance",
     "Healthcare",
-    "Entertainment",
+    "Sport & Leisure",
     "Shopping",
     "Subscriptions",
     "Income & Salary",
     "Transfer",
-    "Fees & Charges",
     "Investment",
     "Cash Withdrawal",
     "Miscellaneous",
 ]
+
+# German keywords mapped to each category — used in the prompt
+CATEGORY_HINTS: dict[str, str] = {
+    "Groceries": "Lebensmittel, Supermarkt, Bäckerei, Bäcker, REWE, ALDI, LIDL, EDEKA, Netto, Picnic, Penny, dm, Rossmann, Vollwert, Backwaren, Metzgerei",
+    "Dining & Restaurants": "Restaurant, Gaststätte, Imbiss, Café, Kaffee, Pizza, Burger, Döner, Lieferando, McDonald, Starbucks",
+    "Transportation": "Tankstelle, Benzin, DB Bahn, Deutsche Bahn, MVV, ADAC, Fahrkarte, Taxi, Uber, Flixbus, Shell, Aral, Jet, Parken, AVG, Augsburger Verkehrsgesellschaft, SWABI, swa, Mobilitäts-Abo",
+    "Internet & Mobile": "Klarmobil, Telekom, Vodafone, O2, Mobilfunk, Handyvertrag, Internet, DSL, Glasfaser, Telefon",
+    "Rent & Housing": "Miete, Wohnung, Nebenkosten, Hausgeld, Mietvertrag, Kaution, Strom, Gas, Wasser, Stadtwerke",
+    "Insurance": "Versicherung, Krankenversicherung, Haftpflicht, KFZ-Versicherung, Allianz, HUK, ERGO, AOK, TK, Barmer",
+    "Healthcare": "Arzt, Apotheke, Zahnarzt, Krankenhaus, Praxis, Medikament, Rezept, Physiotherapie",
+    "Sport & Leisure": "Schwimmbad, Familienbad, Plärre, Sport Sheds, Fitnessstudio, Sportstudio, Kino, Theater, Konzert, Freizeit, Verein, Bowling, Kletterhalle",
+    "Shopping": "Amazon, Zalando, eBay, Online-Shop, Kleidung, Elektronik, Möbel, IKEA, MediaMarkt, Saturn",
+    "Subscriptions": "Abo, Abonnement, Netflix, Spotify, Disney+, Claude, OpenAI, Apple, Google, YouTube Premium, Amazon Prime, Anthropic, Rundfunk, GEZ, Beitragsservice",
+    "Income & Salary": "Gehalt, Lohn, Einkommen, Bezüge, Arbeitgeber, LOHN / GEHALT, Gutschrift",
+    "Transfer": "Überweisung, Umbuchung, Dauerauftrag, Kontowechsel, eigenes Konto",
+    "Investment": "Depot, Aktie, Fonds, ETF, Sparplan, Wertpapier, Trade Republic, Scalable",
+    "Cash Withdrawal": "Bargeld, Geldautomat, Abhebung, ATM, Auszahlung",
+    "Miscellaneous": "Sonstige, Gebühr, Entgelt, Kontoführung",
+}
+
+
+# =============================================================================
+# Input pre-processing — clean up noisy bank data before sending to LLM
+# =============================================================================
+def clean_transaction_for_prompt(transaction: dict) -> dict:
+    """Strip noise from transaction data so the LLM sees cleaner input."""
+    cleaned = transaction.copy()
+
+    # Strip "VISA Debitkartenumsatz vom DD.MM.YYYY" from purpose — it's just noise
+    purpose = cleaned.get("purpose", "") or ""
+    purpose = re.sub(r"VISA Debitkartenumsatz vom \d{2}\.\d{2}\.\d{4}", "", purpose).strip()
+    cleaned["purpose"] = purpose if purpose else ""
+
+    # Clean payee: remove trailing city in format "/CITY"
+    payee = cleaned.get("payee", "") or ""
+    # "VOLLWERTBAECKEREI.SCHN/AUGSBURG" → "VOLLWERTBAECKEREI.SCHN" (keep merchant, drop city)
+    # But preserve the original for context
+    cleaned["payee_clean"] = re.sub(r"/[A-ZÄÖÜ]{2,}$", "", payee).strip()
+
+    # Extract merchant from PayPal purpose
+    if "PayPal" in (cleaned.get("payer", "") or "") or "PayPal" in payee:
+        match = re.search(r"Ihr Einkauf bei (.+?)(?:,|$)", purpose)
+        if match:
+            cleaned["paypal_merchant"] = match.group(1).strip()
+
+    return cleaned
 
 
 # =============================================================================
@@ -101,34 +147,96 @@ def build_ollama_schema(verbose: bool = False) -> dict:
 # =============================================================================
 # Prompt template
 # =============================================================================
-SYSTEM_PROMPT = """You are a financial transaction categorizer for German bank statements. Your task is to assign each transaction to exactly one category from the provided list.
+SYSTEM_PROMPT = """You are a financial transaction categorizer for German bank statements (DKB, Sparkasse, etc.).
+Assign each transaction to exactly ONE category.
 
-Available categories:
+Categories (with German keywords):
 {categories}
 
-Important rules:
-- "LOHN / GEHALT" or "Gehalt" in the purpose means salary → "Income & Salary"
-- "Eingang" transaction type with employer name means salary → "Income & Salary"
-- Bakeries (Bäckerei, Bäcker, Backwaren) → "Groceries"
-- Supermarkets (REWE, ALDI, LIDL, EDEKA, Picnic, Netto) → "Groceries"
-- "VISA Debitkartenumsatz" just means debit card payment, focus on the PAYEE name
-- Subscriptions (Netflix, Spotify, Claude, OpenAI, Disney+, Amazon Prime) → "Subscriptions"
-- "Miete" in purpose → "Rent & Housing"
-- Restaurants, cafés, takeout → "Dining & Restaurants"
-- PayPal purchases → look at the merchant name after "Ihr Einkauf bei"
+## Few-shot examples
 
-For each transaction, analyze the payee name and purpose to determine the category. Focus on WHAT was purchased, not HOW it was paid."""
+Transaction: Payee="REWE SAGT DANKE/AUGSBURG", Purpose="", Type="Ausgang", Amount=-42.15 EUR
+→ Groceries
+
+Transaction: Payee="AWI SOLUTIONS GMBH", Purpose="LOHN / GEHALT 01/26", Type="Eingang", Amount=2822.18 EUR
+→ Income & Salary
+
+Transaction: Payee="CLAUDE.AI.SUBSCRIPTION/ANTHROPIC.COM", Purpose="", Type="Ausgang", Amount=-21.42 EUR
+→ Subscriptions
+
+Transaction: Payee="Steib Claudia", Purpose="Miete Wohnung", Type="Ausgang", Amount=-400.00 EUR
+→ Rent & Housing
+
+Transaction: Payee="VOLLWERTBAECKEREI.SCHN", Purpose="", Type="Ausgang", Amount=-4.40 EUR
+→ Groceries
+
+Transaction: Payee="Picnic", Purpose="", Type="Ausgang", Amount=-31.00 EUR
+→ Groceries
+
+Transaction: Payee="PayPal", Purpose="Ihr Einkauf bei French Albion", Type="Ausgang", Amount=-119.90 EUR
+→ Shopping
+
+Transaction: Payee="Markus Siegfried Böhm", Purpose="", Type="Ausgang", Amount=-58.00 EUR
+→ Transfer
+
+Transaction: Payee="Klarmobil GmbH", Purpose="", Type="Ausgang", Amount=-9.99 EUR
+→ Internet & Mobile
+
+Transaction: Payee="Telekom Deutschland GmbH", Purpose="", Type="Ausgang", Amount=-39.95 EUR
+→ Internet & Mobile
+
+Transaction: Payee="AVG Augsburger Verkehrsgesellschaft mbH", Purpose="Mobilitäts-Abo", Type="Ausgang", Amount=-59.00 EUR
+→ Transportation
+
+Transaction: Payee="SWABI", Purpose="", Type="Ausgang", Amount=-5.00 EUR
+→ Transportation
+
+Transaction: Payee="FAMILIENBAD.AM.PLAERRE", Purpose="", Type="Ausgang", Amount=-4.50 EUR
+→ Sport & Leisure
+
+Transaction: Payee="SPORT SHEDS AUGSBURG", Purpose="", Type="Ausgang", Amount=-15.00 EUR
+→ Sport & Leisure
+
+Transaction: Payee="ARD ZDF Deutschlandradio", Purpose="Rundfunkbeitrag", Type="Ausgang", Amount=-55.08 EUR
+→ Subscriptions
+
+## Rules
+- "VISA Debitkartenumsatz" just means debit card — ignore it, focus on the PAYEE
+- Bakeries (Bäckerei, Bäcker, Vollwert, Backwaren) → Groceries, NOT Dining
+- "Eingang" with "LOHN/GEHALT" or employer name → Income & Salary
+- PayPal → look at merchant name after "Ihr Einkauf bei"
+- "Miete" in purpose → Rent & Housing
+- .AI., .COM subscriptions, streaming services, Rundfunk/GEZ → Subscriptions
+- Picnic, REWE, ALDI, LIDL, EDEKA → Groceries
+- Klarmobil, Telekom → Internet & Mobile (NOT Subscriptions)
+- AVG, Augsburger Verkehrsgesellschaft, SWABI → Transportation
+- Familienbad, Sport Sheds, Fitnessstudio → Sport & Leisure
+- Strom, Gas, Wasser, Stadtwerke → Rent & Housing (part of living costs)
+- Personal names with no clear purpose → Transfer"""
 
 
 def build_transaction_prompt(transaction: dict) -> str:
+    """Format a cleaned transaction for the prompt."""
+    cleaned = clean_transaction_for_prompt(transaction)
+
+    payee = cleaned.get("payee_clean", cleaned.get("payee", "N/A"))
+    purpose = cleaned.get("purpose", "")
+    paypal_merchant = cleaned.get("paypal_merchant", "")
+
     parts = [
-        f"Date: {transaction.get('booking_date', 'N/A')}",
-        f"Payer: {transaction.get('payer', 'N/A')}",
-        f"Payee: {transaction.get('payee', 'N/A')}",
-        f"Purpose: {transaction.get('purpose', 'N/A')}",
-        f"Type: {transaction.get('transaction_type', 'N/A')}",
-        f"Amount: {transaction.get('amount', 0)} {transaction.get('currency', 'EUR')}",
+        f"Payee: {payee}",
     ]
+
+    # Only include purpose if it adds information
+    if purpose:
+        parts.append(f"Purpose: {purpose}")
+
+    if paypal_merchant:
+        parts.append(f"Merchant: {paypal_merchant}")
+
+    parts.append(f"Type: {cleaned.get('transaction_type', 'N/A')}")
+    parts.append(f"Amount: {cleaned.get('amount', 0)} EUR")
+
     return "\n".join(parts)
 
 
@@ -138,6 +246,17 @@ class CategorizerService:
     def __init__(self, model: str = "gemma3:4b"):
         self.model = model
         self.categories = CATEGORIES
+
+    def _build_category_list(self) -> str:
+        """Build category list with German keyword hints."""
+        lines = []
+        for cat in self.categories:
+            hints = CATEGORY_HINTS.get(cat, "")
+            if hints:
+                lines.append(f"- {cat} ({hints})")
+            else:
+                lines.append(f"- {cat}")
+        return "\n".join(lines)
 
     def categorize_transactions(
         self,
@@ -152,7 +271,7 @@ class CategorizerService:
         system_message = {
             "role": "system",
             "content": SYSTEM_PROMPT.format(
-                categories="\n".join(f"- {c}" for c in self.categories)
+                categories=self._build_category_list()
             )
         }
         schema = build_ollama_schema(verbose)
